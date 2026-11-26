@@ -12,8 +12,8 @@ android {
         applicationId = "com.ric.scantoutv5"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "5.0.0"
+        versionCode = 5
+        versionName = "0.0.5"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
