@@ -2,17 +2,24 @@ package com.ric.scantoutv5
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -42,14 +49,51 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+private enum class ViewMode { GRID, LIST, DETAIL }
+
+private fun fmtDate(f: File): String =
+    java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified()))
+
+private fun fmtSize(f: File): String {
+    val kb = f.length() / 1024.0
+    return if (kb < 1024) "%.0f Ko".format(kb) else "%.1f Mo".format(kb / 1024.0)
+}
+
 @Composable
 fun CapturesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var captures by remember { mutableStateOf(CapturesStore.list(context)) }
     var selected by remember { mutableStateOf<File?>(null) }
-    BackHandler(enabled = selected != null) {
-        selected = null
-        captures = CapturesStore.list(context)
+    var viewMode by remember { mutableStateOf(ViewMode.GRID) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var checked by remember { mutableStateOf(setOf<String>()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = selected != null || selectionMode) {
+        if (selected != null) {
+            selected = null
+            captures = CapturesStore.list(context)
+        } else {
+            selectionMode = false
+            checked = emptySet()
+        }
+    }
+
+    fun toggleCheck(f: File) {
+        checked = if (f.absolutePath in checked) checked - f.absolutePath else checked + f.absolutePath
+    }
+
+    fun shareFiles(files: List<File>) {
+        if (files.isEmpty()) return
+        val uris = ArrayList(files.map {
+            FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", it)
+        })
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "image/jpeg"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Partager ${files.size} image(s)"))
     }
 
     val current = selected
@@ -61,42 +105,203 @@ fun CapturesScreen(onBack: () -> Unit) {
         return
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        // Barre haute : retour + titre + modes d'affichage + sélection
         Row(
-            Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onBack) { Text("← Retour") }
-            Spacer(Modifier.width(8.dp))
-            Text("Historique (${captures.size})", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (selectionMode) "${checked.size} sélectionnée(s)" else "Historique (${captures.size})",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f)
+            )
+            if (!selectionMode) {
+                IconButton(onClick = { viewMode = ViewMode.GRID }) {
+                    Icon(Icons.Default.GridView, contentDescription = "Vignettes",
+                        tint = if (viewMode == ViewMode.GRID) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
+                IconButton(onClick = { viewMode = ViewMode.LIST }) {
+                    Icon(Icons.Default.ViewList, contentDescription = "Liste",
+                        tint = if (viewMode == ViewMode.LIST) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
+                IconButton(onClick = { viewMode = ViewMode.DETAIL }) {
+                    Icon(Icons.Default.ViewAgenda, contentDescription = "Détail",
+                        tint = if (viewMode == ViewMode.DETAIL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
+                TextButton(onClick = { selectionMode = true }) { Text("Sélect.") }
+            } else {
+                TextButton(onClick = { selectionMode = false; checked = emptySet() }) { Text("Annuler") }
+            }
         }
+
         if (captures.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Aucune capture")
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(captures, key = { it.absolutePath }) { file ->
-                    val bmp = remember(file.absolutePath) {
-                        CapturesStore.decodeBitmap(file)?.asImageBitmap()
+            when (viewMode) {
+                ViewMode.GRID -> LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    contentPadding = PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(captures, key = { it.absolutePath }) { file ->
+                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val isChecked = file.absolutePath in checked
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box {
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp,
+                                        contentDescription = file.name,
+                                        modifier = Modifier
+                                            .aspectRatio(1f)
+                                            .clickable {
+                                                if (selectionMode) toggleCheck(file) else selected = file
+                                            }
+                                    )
+                                }
+                                if (selectionMode) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { toggleCheck(file) },
+                                        modifier = Modifier.align(Alignment.TopStart)
+                                    )
+                                }
+                            }
+                            Text(fmtDate(file), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        }
                     }
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = file.name,
+                }
+                ViewMode.LIST -> LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(captures, key = { it.absolutePath }) { file ->
+                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val isChecked = file.absolutePath in checked
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { if (selectionMode) toggleCheck(file) else selected = file }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (selectionMode) {
+                                Checkbox(checked = isChecked, onCheckedChange = { toggleCheck(file) })
+                            }
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = file.name,
+                                    modifier = Modifier.size(56.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(fmtDate(file), style = MaterialTheme.typography.bodyMedium)
+                                Text(fmtSize(file), style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                ViewMode.DETAIL -> LazyColumn(
+                    contentPadding = PaddingValues(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(captures, key = { it.absolutePath }) { file ->
+                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val isChecked = file.absolutePath in checked
+                        Card(
                             modifier = Modifier
-                                .aspectRatio(1f)
-                                .clickable { selected = file }
-                        )
+                                .fillMaxWidth()
+                                .clickable { if (selectionMode) toggleCheck(file) else selected = file }
+                        ) {
+                            Column {
+                                Box {
+                                    if (bmp != null) {
+                                        Image(
+                                            bitmap = bmp,
+                                            contentDescription = file.name,
+                                            modifier = Modifier.fillMaxWidth().height(180.dp)
+                                        )
+                                    }
+                                    if (selectionMode) {
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { toggleCheck(file) },
+                                            modifier = Modifier.align(Alignment.TopStart).padding(4.dp)
+                                        )
+                                    }
+                                }
+                                Row(
+                                    Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(fmtDate(file), style = MaterialTheme.typography.bodyMedium)
+                                        Text("${fmtSize(file)} · ${file.name}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Barre d'actions en sélection multiple (au-dessus de la nav bar)
+            if (selectionMode) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        checked = if (checked.size == captures.size) emptySet() else captures.map { it.absolutePath }.toSet()
+                    }) { Text(if (checked.size == captures.size) "Aucun" else "Tout") }
+                    Button(onClick = { shareFiles(captures.filter { it.absolutePath in checked }) },
+                        enabled = checked.isNotEmpty()) {
+                        Icon(Icons.Default.Share, contentDescription = null)
+                        Spacer(Modifier.width(6.dp)); Text("Partager (${checked.size})")
+                    }
+                    OutlinedButton(onClick = { confirmDelete = true }, enabled = checked.isNotEmpty()) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(6.dp)); Text("Supprimer")
                     }
                 }
             }
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Supprimer ${checked.size} capture(s) ?") },
+            text = { Text("Cette action est définitive.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    captures.filter { it.absolutePath in checked }.forEach { it.delete() }
+                    captures = CapturesStore.list(context)
+                    checked = emptySet()
+                    selectionMode = false
+                    confirmDelete = false
+                }) { Text("Supprimer") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Annuler") } }
+        )
     }
 }
 
