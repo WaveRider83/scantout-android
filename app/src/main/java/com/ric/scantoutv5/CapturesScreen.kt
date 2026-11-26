@@ -340,7 +340,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         editedText = zones.filter { it.id in selectedIds }.joinToString("\n") { it.text }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Retour") }
             Spacer(Modifier.width(8.dp))
