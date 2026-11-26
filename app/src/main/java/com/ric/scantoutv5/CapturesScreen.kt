@@ -21,6 +21,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
@@ -51,7 +53,7 @@ fun CapturesScreen(onBack: () -> Unit) {
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(12.dp),
+            Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onBack) { Text("← Retour") }
@@ -101,6 +103,8 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var editedText by remember { mutableStateOf("") }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    var zoom by remember { mutableStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
 
     fun runOcr() {
         val bmp = bitmap ?: return
@@ -121,7 +125,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Retour") }
             Spacer(Modifier.width(8.dp))
             Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
@@ -135,13 +139,24 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                     .aspectRatio(aspect)
                     .clipToBounds()
                     .onGloballyPositioned { viewSize = it.size }
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, panChange, zoomChange, _ ->
+                            zoom = (zoom * zoomChange).coerceIn(1f, 6f)
+                            pan += panChange * zoom
+                        }
+                    }
                     .pointerInput(zones, viewSize) {
                         detectTapGestures { offset ->
                             if (viewSize.width == 0) return@detectTapGestures
+                            val cx = viewSize.width / 2f
+                            val cy = viewSize.height / 2f
+                            // position dans le repere de l'image non transformee
+                            val lx = (offset.x - cx - pan.x) / zoom + cx
+                            val ly = (offset.y - cy - pan.y) / zoom + cy
                             val sx = bitmap.width.toFloat() / viewSize.width
                             val sy = bitmap.height.toFloat() / viewSize.height
-                            val ix = offset.x * sx
-                            val iy = offset.y * sy
+                            val ix = lx * sx
+                            val iy = ly * sy
                             val hit = zones.lastOrNull { z ->
                                 ix >= z.box.left && ix <= z.box.right && iy >= z.box.top && iy <= z.box.bottom
                             }
@@ -152,6 +167,16 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                         }
                     }
             ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = zoom,
+                            scaleY = zoom,
+                            translationX = pan.x,
+                            translationY = pan.y
+                        )
+                ) {
                 Image(
                     bitmap = imageBitmap,
                     contentDescription = file.name,
@@ -176,6 +201,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                             )
                         }
                     }
+                }
                 }
             }
         }

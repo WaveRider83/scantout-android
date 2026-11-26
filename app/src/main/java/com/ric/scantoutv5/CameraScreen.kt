@@ -2,8 +2,7 @@ package com.ric.scantoutv5
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
-import android.os.Environment
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -11,14 +10,23 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -61,11 +69,29 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
             .setTargetResolution(android.util.Size(1440, 1080))
             .build()
     }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var zoomRatio by remember { mutableStateOf(1f) }
+    var flashMode by remember { mutableStateOf(ImageCapture.FLASH_MODE_OFF) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
     var lastCaptured by remember { mutableStateOf<File?>(null) }
     var capturing by remember { mutableStateOf(false) }
     val executor = remember { Executors.newSingleThreadExecutor() }
 
-    Box(Modifier.fillMaxSize().background(Black)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTransformGestures { _, _, zoomChange, _ ->
+                    val cam = camera ?: return@detectTransformGestures
+                    val maxZoom = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 5f
+                    val newZoom = (zoomRatio * zoomChange).coerceIn(1f, maxZoom)
+                    zoomRatio = newZoom
+                    cam.cameraControl.setZoomRatio(newZoom)
+                }
+            }
+    ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -80,7 +106,7 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                     }
                     try {
                         provider.unbindAll()
-                        provider.bindToLifecycle(
+                        camera = provider.bindToLifecycle(
                             ctx as androidx.lifecycle.LifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
@@ -94,6 +120,32 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
             }
         )
 
+        // Flash (haut droite, sous la status bar)
+        IconButton(
+            onClick = {
+                flashMode = when (flashMode) {
+                    ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_ON
+                    ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_AUTO
+                    else -> ImageCapture.FLASH_MODE_OFF
+                }
+                imageCapture.flashMode = flashMode
+            },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(8.dp)
+        ) {
+            Icon(
+                when (flashMode) {
+                    ImageCapture.FLASH_MODE_ON -> Icons.Default.FlashOn
+                    ImageCapture.FLASH_MODE_AUTO -> Icons.Default.FlashAuto
+                    else -> Icons.Default.FlashOff
+                },
+                contentDescription = "Flash",
+                tint = Color(0xFFFFEB3B)
+            )
+        }
+
         // Vignette dernière capture
         lastCaptured?.let { file ->
             val bmp = remember(file) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
@@ -103,52 +155,79 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                     contentDescription = "Dernière capture",
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 16.dp, bottom = 120.dp)
-                        .size(72.dp)
+                        .padding(start = 16.dp, bottom = 96.dp)
+                        .size(64.dp)
                 )
             }
         }
 
-        // Barre de menu bas (type v3) : Historique | Capture | (emplacement futur)
+        // Barre de menu bas : Historique | Capture | options (engrenage)
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(androidx.compose.ui.graphics.Color(0xCC05070F))
+                .background(Color(0xCC05070F))
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            OutlinedButton(onClick = onOpenCaptures) { Text("Historique") }
+            IconButton(onClick = onOpenCaptures) {
+                Icon(Icons.Default.History, contentDescription = "Historique", tint = Color(0xFF00E5FF))
+            }
             Button(
                 onClick = {
-                if (capturing) return@Button
-                capturing = true
-                val out = CapturesStore.newCaptureFile(context)
-                imageCapture.takePicture(
-                    ImageCapture.OutputFileOptions.Builder(out).build(),
-                    executor,
-                    object : ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                            capturing = false
-                            lastCaptured = out
-                        }
-                        override fun onError(exc: ImageCaptureException) {
-                            capturing = false
-                            ContextCompat.getMainExecutor(context).execute {
-                                Toast.makeText(context, "Échec capture: ${exc.message}", Toast.LENGTH_LONG).show()
+                    if (capturing) return@Button
+                    capturing = true
+                    val out = CapturesStore.newCaptureFile(context)
+                    imageCapture.takePicture(
+                        ImageCapture.OutputFileOptions.Builder(out).build(),
+                        executor,
+                        object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                capturing = false
+                                lastCaptured = out
+                            }
+                            override fun onError(exc: ImageCaptureException) {
+                                capturing = false
+                                ContextCompat.getMainExecutor(context).execute {
+                                    Toast.makeText(context, "Échec capture: ${exc.message}", Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
-                    }
-                )
-            },
-            enabled = !capturing,
-            modifier = Modifier.size(72.dp)
-        ) { Text(if (capturing) "…" else "●", style = MaterialTheme.typography.headlineMedium) }
-            Spacer(Modifier.width(88.dp))
+                    )
+                },
+                enabled = !capturing,
+                modifier = Modifier.size(64.dp)
+            ) { Text(if (capturing) "…" else "●", style = MaterialTheme.typography.headlineSmall) }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Options", tint = Color(0xFF00E5FF))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Effacer l'historique…") },
+                        onClick = { menuOpen = false; confirmClear = true }
+                    )
+                }
+            }
         }
     }
-}
 
-private val Black = androidx.compose.ui.graphics.Color.Black
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Effacer l'historique ?") },
+            text = { Text("Toutes les captures seront supprimées définitivement.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    CapturesStore.deleteAll(context)
+                    lastCaptured = null
+                    confirmClear = false
+                    Toast.makeText(context, "Historique effacé", Toast.LENGTH_SHORT).show()
+                }) { Text("Effacer") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Annuler") } }
+        )
+    }
+}

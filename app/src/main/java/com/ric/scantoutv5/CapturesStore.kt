@@ -40,6 +40,10 @@ object CapturesStore {
         }
     }
 
+    fun deleteAll(context: Context) {
+        scansDir(context).listFiles()?.forEach { it.delete() }
+    }
+
     fun list(context: Context): List<File> =
         scansDir(context).listFiles { f -> f.isFile && f.extension == "jpg" }
             ?.sortedByDescending { it.lastModified() }
