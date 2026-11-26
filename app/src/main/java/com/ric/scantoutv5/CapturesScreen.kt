@@ -3,7 +3,6 @@ package com.ric.scantoutv5
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,6 +20,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.runtime.*
@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.BackHandler
@@ -116,10 +117,10 @@ fun CapturesScreen(onBack: () -> Unit) {
         return
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize()) {
         // Barre haute : retour + titre + modes d'affichage + sélection
         Row(
-            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onBack) { Text("← Retour") }
@@ -151,9 +152,20 @@ fun CapturesScreen(onBack: () -> Unit) {
                     Icon(Icons.Default.ViewAgenda, contentDescription = "Détail",
                         tint = if (viewMode == ViewMode.DETAIL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                 }
-                TextButton(onClick = { selectionMode = true }) { Text("Sélect.") }
             } else {
-                TextButton(onClick = { selectionMode = false; checked = emptySet() }) { Text("Annuler") }
+                IconButton(onClick = {
+                    shareFiles(captures.filter { it.absolutePath in checked })
+                }, enabled = checked.isNotEmpty()) {
+                    Icon(Icons.Default.Share, contentDescription = "Partager la sélection",
+                        tint = if (checked.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { confirmDelete = true }, enabled = checked.isNotEmpty()) {
+                    Icon(Icons.Default.Delete, contentDescription = "Supprimer la sélection",
+                        tint = if (checked.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { selectionMode = false; checked = emptySet() }) {
+                    Icon(Icons.Default.Close, contentDescription = "Quitter la sélection")
+                }
             }
         }
 
@@ -181,8 +193,11 @@ fun CapturesScreen(onBack: () -> Unit) {
                                         contentDescription = file.name,
                                         modifier = Modifier
                                             .aspectRatio(1f)
-                                            .clickable {
-                                                if (selectionMode) toggleCheck(file) else selected = file
+                                            .pointerInput(selectionMode) {
+                                                detectTapGestures(
+                                                    onTap = { if (selectionMode) toggleCheck(file) else selected = file },
+                                                    onLongPress = { if (!selectionMode) { selectionMode = true; checked = setOf(file.absolutePath) } }
+                                                )
                                             }
                                     )
                                 }
@@ -208,7 +223,12 @@ fun CapturesScreen(onBack: () -> Unit) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { if (selectionMode) toggleCheck(file) else selected = file }
+                                .pointerInput(selectionMode) {
+                                    detectTapGestures(
+                                        onTap = { if (selectionMode) toggleCheck(file) else selected = file },
+                                        onLongPress = { if (!selectionMode) { selectionMode = true; checked = setOf(file.absolutePath) } }
+                                    )
+                                }
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -243,7 +263,12 @@ fun CapturesScreen(onBack: () -> Unit) {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { if (selectionMode) toggleCheck(file) else selected = file }
+                                .pointerInput(selectionMode) {
+                                    detectTapGestures(
+                                        onTap = { if (selectionMode) toggleCheck(file) else selected = file },
+                                        onLongPress = { if (!selectionMode) { selectionMode = true; checked = setOf(file.absolutePath) } }
+                                    )
+                                }
                         ) {
                             Column {
                                 Box {
@@ -280,30 +305,6 @@ fun CapturesScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Barre d'actions en sélection multiple (au-dessus de la nav bar)
-            if (selectionMode) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = {
-                        checked = if (checked.size == captures.size) emptySet() else captures.map { it.absolutePath }.toSet()
-                    }) { Text(if (checked.size == captures.size) "Aucun" else "Tout") }
-                    Button(onClick = { shareFiles(captures.filter { it.absolutePath in checked }) },
-                        enabled = checked.isNotEmpty()) {
-                        Icon(Icons.Default.Share, contentDescription = null)
-                        Spacer(Modifier.width(6.dp)); Text("Partager (${checked.size})")
-                    }
-                    OutlinedButton(onClick = { confirmDelete = true }, enabled = checked.isNotEmpty()) {
-                        Icon(Icons.Default.Delete, contentDescription = null)
-                        Spacer(Modifier.width(6.dp)); Text("Supprimer")
-                    }
-                }
-            }
         }
     }
 
@@ -366,8 +367,8 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         editedText = zones.filter { it.id in selectedIds }.joinToString("\n") { it.text }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Retour") }
             Spacer(Modifier.width(8.dp))
             Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.weight(1f))

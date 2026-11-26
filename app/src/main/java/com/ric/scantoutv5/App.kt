@@ -13,6 +13,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.activity.compose.BackHandler
 import com.ric.scantoutv5.theme.NeonPalette
 import com.ric.scantoutv5.theme.ScantoutTheme
@@ -44,7 +45,7 @@ fun App() {
         androidx.compose.material3.Surface(color = scheme.background, contentColor = scheme.onBackground) {
         var screen by rememberSaveable { mutableStateOf(Screen.Camera) }
         BackHandler(enabled = screen != Screen.Camera) { screen = Screen.Camera }
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
             when (screen) {
                 Screen.Camera -> CameraScreen(onOpenCaptures = { screen = Screen.Captures })
                 Screen.Captures -> CapturesScreen(onBack = { screen = Screen.Camera })

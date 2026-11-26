@@ -135,7 +135,6 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
             },
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .statusBarsPadding()
                 .padding(8.dp)
         ) {
             Icon(
@@ -170,7 +169,6 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(Color(0xCC05070F))
-                .navigationBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
