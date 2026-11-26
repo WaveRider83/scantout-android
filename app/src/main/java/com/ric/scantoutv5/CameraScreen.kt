@@ -96,26 +96,33 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
 
         // Vignette dernière capture
         lastCaptured?.let { file ->
-            val bmp = remember(file) { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }
+            val bmp = remember(file) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
             if (bmp != null) {
                 androidx.compose.foundation.Image(
                     bitmap = bmp,
                     contentDescription = "Dernière capture",
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 16.dp, bottom = 32.dp)
+                        .padding(start = 16.dp, bottom = 120.dp)
                         .size(72.dp)
                 )
             }
         }
 
-        FilledTonalButton(
-            onClick = onOpenCaptures,
-            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
-        ) { Text("Historique") }
-
-        Button(
-            onClick = {
+        // Barre de menu bas (type v3) : Historique | Capture | (emplacement futur)
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(androidx.compose.ui.graphics.Color(0xCC05070F))
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            OutlinedButton(onClick = onOpenCaptures) { Text("Historique") }
+            Button(
+                onClick = {
                 if (capturing) return@Button
                 capturing = true
                 val out = CapturesStore.newCaptureFile(context)
@@ -137,11 +144,10 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                 )
             },
             enabled = !capturing,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
-                .size(84.dp)
+            modifier = Modifier.size(72.dp)
         ) { Text(if (capturing) "…" else "●", style = MaterialTheme.typography.headlineMedium) }
+            Spacer(Modifier.width(88.dp))
+        }
     }
 }
 

@@ -71,7 +71,7 @@ fun CapturesScreen(onBack: () -> Unit) {
             ) {
                 items(captures, key = { it.absolutePath }) { file ->
                     val bmp = remember(file.absolutePath) {
-                        BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+                        CapturesStore.decodeBitmap(file)?.asImageBitmap()
                     }
                     if (bmp != null) {
                         Image(
@@ -93,7 +93,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    val bitmap = remember(file.absolutePath) { BitmapFactory.decodeFile(file.absolutePath) }
+    val bitmap = remember(file.absolutePath) { CapturesStore.decodeBitmap(file) }
     val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
 
     var zones by remember { mutableStateOf<List<TextZone>>(emptyList()) }
