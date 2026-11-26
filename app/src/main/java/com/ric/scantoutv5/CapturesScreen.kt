@@ -25,6 +25,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Highlight
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -48,6 +54,9 @@ import androidx.core.content.FileProvider
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +72,22 @@ private fun fmtDate(f: File): String =
 private fun fmtSize(f: File): String {
     val kb = f.length() / 1024.0
     return if (kb < 1024) "%.0f Ko".format(kb) else "%.1f Mo".format(kb / 1024.0)
+}
+
+fun loadRotatedBitmap(context: android.content.Context, file: java.io.File): android.graphics.Bitmap? {
+    val b = CapturesStore.decodeBitmap(file) ?: return null
+    val rot = OcrSelectionStore.loadRotation(context, file.name)
+    return if (rot % 360 == 0) b else rotateBitmapTop(b, rot.toFloat())
+}
+
+fun rotateBitmapTop(src: android.graphics.Bitmap, degrees: Float): android.graphics.Bitmap {
+    if (degrees % 360f == 0f) return src
+    val m = android.graphics.Matrix().apply { postRotate(degrees, src.width / 2f, src.height / 2f) }
+    val out = android.graphics.Bitmap.createBitmap(src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(out)
+    c.drawColor(android.graphics.Color.WHITE)
+    c.drawBitmap(src, m, null)
+    return out
 }
 
 @Composable
@@ -185,7 +210,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(captures, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Box {
@@ -220,7 +245,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(captures, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Row(
                             Modifier
@@ -260,7 +285,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(captures, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Card(
                             modifier = Modifier
@@ -335,8 +360,9 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    val bitmap = remember(file.absolutePath) { CapturesStore.decodeBitmap(file) }
+    var bitmap by remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { mutableStateOf(loadRotatedBitmap(context, file)) }
     val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
+
 
     var zones by remember { mutableStateOf<List<TextZone>>(emptyList()) }
     var selectedIds by remember { mutableStateOf(setOf<Int>()) }
@@ -345,38 +371,189 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     var blurry by remember { mutableStateOf(false) }
     var ppRunning by remember { mutableStateOf(false) }
+    var ppResults by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    var snPair by remember { mutableStateOf(Settings.snBarcodePair(context)) }
+    var hlDoubts by remember { mutableStateOf(Settings.highlightDoubts(context)) }
+    var showQrZone by remember { mutableStateOf(Settings.showBarcodeZone(context)) }
+    var restored by remember { mutableStateOf(false) }
+
+    fun normPp(s: String) = s.filter { !it.isWhitespace() }.uppercase()
+    // Réinjecte les caractères PP-OCR dans la trame ML Kit (espaces/séparateurs conservés).
+    // Retourne null si les longueurs (hors espaces) ne correspondent pas.
+    fun mergeKeepLayout(ml: String, pp: String): String? {
+        val ppChars = pp.filter { it.isLetterOrDigit() }
+        val mlCore = ml.count { it.isLetterOrDigit() }
+        if (ppChars.isEmpty() || ppChars.length != mlCore) return null
+        val sb = StringBuilder()
+        var i = 0
+        for (c in ml) {
+            if (c.isLetterOrDigit()) { sb.append(ppChars[i]); i++ } else sb.append(c)
+        }
+        return sb.toString()
+    }
+    fun doubtful(z: TextZone): Boolean = !z.isBarcode &&
+        Regex("[A-Za-z0-9]{4,}").findAll(z.text).any { m ->
+            val t = m.value; t.any(Char::isDigit) && t.any { it in "0O1lI5S8B" }
+        }
+    // Contrôle SN/QR : si une ligne OCR contient la valeur d'un code-barres (comparaison alphanum),
+    // on corrige en place uniquement les caractères concernés. Sinon la ligne est laissée telle quelle.
+    // Aligne la valeur du code-barres sur la ligne OCR par fenêtre glissante (tolère les substitutions OCR),
+    // remplace la fenêtre par la valeur exacte, et nettoie un glyphe-piège résiduel (« I » de logo) collé après « SN ».
+    fun correctLineWithBarcodes(line: String, barcodes: List<TextZone>): String {
+        val idxMap = mutableListOf<Int>()
+        val normSb = StringBuilder()
+        for ((i, c) in line.withIndex()) {
+            if (c.isLetterOrDigit()) { normSb.append(c.uppercaseChar()); idxMap.add(i) }
+        }
+        val nz = normSb.toString()
+        if (nz.isEmpty()) return line
+        for (b in barcodes) {
+            val nb = b.text.uppercase().filter { it.isLetterOrDigit() }
+            if (nb.length < 6 || nz.length < nb.length) continue
+            var bestAt = -1; var bestMatch = -1
+            for (i in 0..nz.length - nb.length) {
+                var m = 0
+                for (j in nb.indices) if (nz[i + j] == nb[j]) m++
+                if (m > bestMatch) { bestMatch = m; bestAt = i }
+            }
+            if (bestMatch < (nb.length * 3 + 4) / 5) continue  // < 60 % de caractères identiques : pas la même chaîne
+            val from = idxMap[bestAt]
+            val to = idxMap[bestAt + nb.length - 1] + 1
+            var prefix = line.substring(0, from)
+            prefix = prefix.replace(Regex("""(?i)(S[/ ]?N)[Il1|]\s*$"""), "$1 ")
+            val corrected = prefix + b.text.trim() + line.substring(to)
+            if (corrected != line) android.util.Log.d("ScantoutSN", "corrigé: «$line» -> «$corrected»")
+            return corrected
+        }
+        return line
+    }
+
+    fun applyBarcodeCorrections(zones: List<TextZone>, keepBarcodes: Boolean): List<TextZone> {
+        val barcodes = zones.filter { it.isBarcode }
+        return zones.mapNotNull { z ->
+            if (z.isBarcode) { if (keepBarcodes) z else null }
+            else {
+                val corrected = correctLineWithBarcodes(z.text, barcodes)
+                if (corrected != z.text) z.copy(text = corrected) else z
+            }
+        }
+    }
+
+    // Affichage : corrections SN + charge brute pour les zones code-barres (rawValue)
+    fun displayZones(z: List<TextZone>): List<TextZone> =
+        (if (snPair) applyBarcodeCorrections(z, showQrZone) else z)
+            .map { it2 -> if (it2.isBarcode && !it2.rawValue.isNullOrEmpty()) it2.copy(text = it2.rawValue) else it2 }
+
+    fun shownZones(): List<TextZone> {
+        val base = displayZones(zones)
+        return if (showQrZone) base else base.filter { !it.isBarcode }
+    }
+
+    fun renderWithPp(sel: List<TextZone>, pp: Map<Int, String>): String =
+        sel.flatMap { z ->
+            val lines = mutableListOf(z.text)
+            if (snPair && z.isBarcode) {
+                val raw = z.text.trim()
+                val sn = OcrEngine.sanitizeSn(z.rawValue ?: z.text).trim()
+                if (sn.isNotEmpty() && sn != raw) lines.add("SN " + sn)
+            }
+            pp[z.id]?.let { ppText ->
+                val merged = mergeKeepLayout(z.text, ppText)
+                if (merged != null && normPp(merged) != normPp(z.text)) lines[lines.size - 1] = merged
+            }
+            lines
+        }.joinToString("\n")
     var zoom by remember { mutableStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
 
     fun applySelection(ids: Set<Int>) {
         selectedIds = ids
-        editedText = zones.filter { it.id in ids }.joinToString("\n") { it.text }
-        OcrSelectionStore.save(context, file.name, zones.filter { it.id in ids }.map { it.text })
+        editedText = renderWithPp(shownZones().filter { it.id in ids }, ppResults)
+        OcrSelectionStore.save(context, file.name, shownZones().filter { it.id in ids }.map { it.text })
     }
 
-    fun restoreSelection(result: List<TextZone>) {
+    fun restoreSelection(result: List<TextZone>): Pair<Set<Int>, Boolean> {
         val saved = OcrSelectionStore.load(context, file.name)
-        val remaining = saved.toMutableList()
+        val norm = { t: String -> t.lowercase().filter { !it.isWhitespace() } }
+        val remaining = saved.map { norm(it) }.toMutableList()
         val ids = mutableSetOf<Int>()
-        for (z in result) {
-            val i = remaining.indexOf(z.text)
-            if (i >= 0) { ids.add(z.id); remaining.removeAt(i) }
+        val shown = displayZones(result)
+        fun candidates(z: TextZone): List<String> = buildList {
+            add(norm(z.text))
+            if (z.isBarcode) {
+                add(norm(OcrEngine.sanitizeSn(z.text)))
+                z.rawValue?.let { add(norm(it)) }
+            }
+        }
+        for (z in shown) {
+            val idx = candidates(z).firstNotNullOfOrNull { c -> remaining.indexOf(c).takeIf { it >= 0 } }
+            if (idx != null && idx >= 0) { ids.add(z.id); remaining.removeAt(idx) }
         }
         selectedIds = ids
         val validated = OcrSelectionStore.loadText(context, file.name)
-        editedText = validated ?: result.filter { it.id in ids }.joinToString("\n") { it.text }
+        val base = shown.filter { it.id in ids }
+        editedText = validated ?: renderWithPp(base, emptyMap())
+        return ids to (validated != null)
     }
 
-    fun runOcr() {
-        val bmp = bitmap ?: return
+    fun runOcr(resetSelection: Boolean = false) {
+        val srcBmp = bitmap ?: return
         loading = true
         scope.launch {
             try {
-                blurry = withContext(Dispatchers.Default) { BlurDetector.isBlurry(bmp) }
-                val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
+                val withBarcodes = Settings.barcodesEnabled(context) || snPair
+                var finalBmp: android.graphics.Bitmap = srcBmp
+                var result: List<TextZone> = OcrEngine.recognize(srcBmp, withBarcodes)
+                // 180° automatique uniquement si PP-OCR (confiance par ligne) préfère nettement l'image retournée.
+                fun ppConfidence(bmp: android.graphics.Bitmap, res: List<TextZone>): Double {
+                    val lines = res.filter { !it.isBarcode && it.text.length >= 4 }
+                        .sortedByDescending { it.box.width().toLong() * it.box.height() }
+                        .take(4)
+                    var sum = 0.0; var wsum = 0.0
+                    for (l in lines) {
+                        val r = PpOcrRec.recognize(context, bmp, l.box) ?: continue
+                        val wgt = l.text.length.toDouble()
+                        sum += r.confidence * wgt; wsum += wgt
+                    }
+                    return if (wsum == 0.0) 0.0 else sum / wsum
+                }
+                run {
+                    val flipped = rotateBitmapTop(srcBmp, 180f)
+                    val flippedRes = OcrEngine.recognize(flipped, withBarcodes)
+                    val c0 = ppConfidence(srcBmp, result)
+                    val cF = ppConfidence(flipped, flippedRes)
+                    if (c0 > 0.0 && cF > c0 * 1.2 && cF >= 0.55) {
+                        finalBmp = flipped; result = flippedRes
+                        ppResults = emptyMap()
+                        bitmap = flipped
+                        zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero
+                        val cur = OcrSelectionStore.loadRotation(context, file.name)
+                        OcrSelectionStore.saveRotation(context, file.name, cur + 180)
+                    }
+                }
+
+                blurry = withContext(Dispatchers.Default) { BlurDetector.isBlurry(finalBmp) }
                 zones = result
-                restoreSelection(result)
+                val (savedIds, _) = restoreSelection(result)
+                restored = true
+                val ids = savedIds
+                val shownResult = displayZones(result)
+                val targets = shownResult.filter { it.id in ids && !it.isBarcode && doubtful(it) }
+                if (targets.isNotEmpty()) {
+                    scope.launch {
+                        ppRunning = true
+                        val pp = mutableMapOf<Int, String>()
+                        withContext(Dispatchers.Default) {
+                            for (z in targets) PpOcrRec.recognize(context, finalBmp, z.box)?.let { pp[z.id] = it.text }
+                        }
+                        ppResults = ppResults + pp
+                        val sel = displayZones(result).filter { it.id in ids }
+                        editedText = renderWithPp(sel, ppResults)
+                        ppRunning = false
+                    }
+                }
             } catch (e: Exception) {
+                restored = true
                 android.widget.Toast.makeText(context, "OCR échoué: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             } finally {
                 loading = false
@@ -392,9 +569,30 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             .distinct().take(8).toList()
     }
 
+
+    fun refreshAfterSelectionChange() {
+        val sel = shownZones().filter { it.id in selectedIds }
+        editedText = renderWithPp(sel, ppResults)
+        OcrSelectionStore.save(context, file.name, sel.map { it.text })
+        val missing = sel.filter { doubtful(it) && it.id !in ppResults }
+        val bmp = bitmap
+        if (missing.isNotEmpty() && bmp != null) {
+            scope.launch {
+                ppRunning = true
+                val texts = mutableMapOf<Int, String>()
+                withContext(Dispatchers.Default) {
+                    for (z in missing) PpOcrRec.recognize(context, bmp, z.box)?.takeIf { it.text.isNotBlank() }?.let { texts[z.id] = it.text }
+                }
+                ppResults = ppResults + texts
+                editedText = renderWithPp(shownZones().filter { it.id in selectedIds }, ppResults)
+                ppRunning = false
+            }
+        }
+    }
+
     fun syncEditedFromSelection() {
-        editedText = zones.filter { it.id in selectedIds }.joinToString("\n") { it.text }
-        OcrSelectionStore.save(context, file.name, zones.filter { it.id in selectedIds }.map { it.text })
+        editedText = renderWithPp(shownZones().filter { it.id in selectedIds }, ppResults)
+        OcrSelectionStore.save(context, file.name, shownZones().filter { it.id in selectedIds }.map { it.text })
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -416,19 +614,21 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             }
         }
 
-        if (bitmap != null && imageBitmap != null) {
-            val aspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        val curBitmap = bitmap
+        if (curBitmap != null && imageBitmap != null) {
+            val bmpSafe = curBitmap
+            val aspect = bmpSafe.width.toFloat() / bmpSafe.height.toFloat()
             val maxH = 340.dp
             BoxWithConstraints(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().height(maxH).clipToBounds(),
                 contentAlignment = Alignment.Center
             ) {
+            // conteneur plein largeur x maxH : le zoom peut occuper tout l'espace disponible
             val w = minOf(maxWidth, maxH * aspect)
             val h = w / aspect
             Box(
                 Modifier
                     .size(w, h)
-                    .clipToBounds()
                     .clipToBounds()
                     .onGloballyPositioned { viewSize = it.size }
                     .pointerInput(Unit) {
@@ -437,7 +637,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                             pan += panChange * zoom
                         }
                     }
-                    .pointerInput(zones, viewSize) {
+                    .pointerInput(shownZones().size, viewSize) {
                         detectTapGestures { offset ->
                             if (viewSize.width == 0) return@detectTapGestures
                             val cx = viewSize.width / 2f
@@ -445,16 +645,16 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                             // position dans le repere de l'image non transformee
                             val lx = (offset.x - cx - pan.x) / zoom + cx
                             val ly = (offset.y - cy - pan.y) / zoom + cy
-                            val sx = bitmap.width.toFloat() / viewSize.width
-                            val sy = bitmap.height.toFloat() / viewSize.height
+                            val sx = bmpSafe.width.toFloat() / viewSize.width
+                            val sy = bmpSafe.height.toFloat() / viewSize.height
                             val ix = lx * sx
                             val iy = ly * sy
-                            val hit = zones.lastOrNull { z ->
+                            val hit = shownZones().lastOrNull { z ->
                                 ix >= z.box.left && ix <= z.box.right && iy >= z.box.top && iy <= z.box.bottom
                             }
                             if (hit != null) {
                                 selectedIds = if (hit.id in selectedIds) selectedIds - hit.id else selectedIds + hit.id
-                                syncEditedFromSelection()
+                                refreshAfterSelectionChange()
                             }
                         }
                     }
@@ -476,9 +676,9 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                 )
                 if (viewSize != IntSize.Zero) {
                     Canvas(Modifier.fillMaxSize()) {
-                        val sx = size.width / bitmap.width
-                        val sy = size.height / bitmap.height
-                        zones.forEach { z ->
+                        val sx = size.width / bmpSafe.width
+                        val sy = size.height / bmpSafe.height
+                        shownZones().forEach { z ->
                             val sel = z.id in selectedIds
                             drawRect(
                                 color = if (sel) Color(0x66FFEB3B) else Color(0x33000000),
@@ -496,6 +696,41 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                 }
                 }
             }
+            }
+        }
+
+        // Barre d'icônes compacte sous l'image
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            fun tint(on: Boolean) = if (on) Color(0xFF00E5FF) else Color(0xFFB8C9D9)
+            IconButton(onClick = {
+                selectedIds = shownZones().map { it.id }.toSet(); refreshAfterSelectionChange()
+            }) { Icon(Icons.Default.SelectAll, contentDescription = "Tout sélectionner", tint = Color(0xFFE6F7FF)) }
+            IconButton(onClick = {
+                selectedIds = emptySet(); refreshAfterSelectionChange()
+            }) { Icon(Icons.Default.ClearAll, contentDescription = "Aucune zone", tint = Color(0xFFE6F7FF)) }
+            IconButton(onClick = { snPair = !snPair; Settings.setSnBarcodePair(context, snPair); refreshAfterSelectionChange() }) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = "SN ↔ code-barres", tint = tint(snPair))
+            }
+            IconButton(onClick = { hlDoubts = !hlDoubts; Settings.setHighlightDoubts(context, hlDoubts) }) {
+                Icon(Icons.Default.Highlight, contentDescription = "Doutes surlignés", tint = tint(hlDoubts))
+            }
+            IconButton(onClick = { showQrZone = !showQrZone; Settings.setShowBarcodeZone(context, showQrZone); refreshAfterSelectionChange() }) {
+                Icon(Icons.Default.QrCode, contentDescription = "Zone QR visible", tint = tint(showQrZone))
+            }
+            IconButton(onClick = {
+                val b = bitmap ?: return@IconButton
+                val rot = (OcrSelectionStore.loadRotation(context, file.name) + 90) % 360
+                OcrSelectionStore.saveRotation(context, file.name, rot)
+                bitmap = rotateBitmapTop(b, 90f)
+                ppResults = emptyMap()
+                zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero
+                runOcr()
+            }) {
+                Icon(Icons.Default.RotateRight, contentDescription = "Pivoter de 90°", tint = Color(0xFFE6F7FF))
             }
         }
 
@@ -531,65 +766,32 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             ) {
                 OutlinedButton(onClick = {
                     OcrSelectionStore.saveText(context, file.name, null)
-                    runOcr()
+                    runOcr(resetSelection = true)
                 }, enabled = !loading, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text("Re-analyser", style = MaterialTheme.typography.labelMedium)
-                }
-                OutlinedButton(onClick = {
-                    val bmp = bitmap ?: return@OutlinedButton
-                    val targets = zones.filter { it.id in selectedIds }.ifEmpty { zones }
-                    ppRunning = true
-                    scope.launch {
-                        val texts = mutableMapOf<Int, PpOcrRec.RecResult>()
-                        withContext(Dispatchers.Default) {
-                            for (z in targets) {
-                                PpOcrRec.recognize(context, bmp, z.box)?.let { texts[z.id] = it }
-                            }
-                        }
-                        editedText = if (texts.isEmpty()) editedText
-                            else targets.joinToString("\n") { z -> texts[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
-                        val avg = if (texts.isEmpty()) 0f else texts.values.map { it.confidence }.average().toFloat()
-                        android.widget.Toast.makeText(context, "PP-OCR appliqué (confiance moyenne ${(avg*100).toInt()} %)", android.widget.Toast.LENGTH_SHORT).show()
-                        ppRunning = false
-                    }
-                }, enabled = !ppRunning && zones.isNotEmpty(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                    Text(if (ppRunning) "PP-OCR…" else "Vérifier PP-OCR", style = MaterialTheme.typography.labelMedium)
-                }
-                Button(onClick = {
-                    OcrSelectionStore.saveText(context, file.name, editedText)
-                    android.widget.Toast.makeText(context, "Texte validé", android.widget.Toast.LENGTH_SHORT).show()
-                }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
-                    Text("Valider", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = {
-                    selectedIds = zones.map { it.id }.toSet()
-                    syncEditedFromSelection()
-                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
-                    Text("Tout", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(onClick = {
-                    selectedIds = emptySet()
-                    editedText = ""
-                    OcrSelectionStore.save(context, file.name, emptyList())
-                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
-                    Text("Aucun", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
 
+        LaunchedEffect(editedText) {
+            if (restored) OcrSelectionStore.saveText(context, file.name, editedText)
+        }
         OutlinedTextField(
             value = editedText,
             onValueChange = { editedText = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            minLines = 3,
+            modifier = Modifier.fillMaxWidth().height(170.dp).padding(horizontal = 12.dp),
             label = { Text("Texte (éditable)") }
         )
+        if (hlDoubts && editedText.isNotBlank()) {
+            val doubt = "0O1lI5S8B2Z6"
+            val ann = buildAnnotatedString {
+                for (c in editedText) {
+                    if (c in doubt) withStyle(SpanStyle(color = Color(0xFFFFB300), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)) { append(c) } else append(c)
+                }
+            }
+            Text(ann, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), style = MaterialTheme.typography.bodySmall)
+            Text("ambre = caractère ambigu", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8FA3B8), modifier = Modifier.padding(horizontal = 14.dp))
+        }
 
         Button(
             onClick = { clipboard.setText(AnnotatedString(editedText)) },

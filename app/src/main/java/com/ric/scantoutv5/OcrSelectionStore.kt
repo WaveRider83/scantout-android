@@ -33,6 +33,19 @@ object OcrSelectionStore {
         f.writeText(obj.toString())
     }
 
+    fun loadRotation(context: Context, fileName: String): Int {
+        val f = store(context)
+        if (!f.exists()) return 0
+        return runCatching { JSONObject(f.readText()).optInt(fileName + "#rot", 0) }.getOrDefault(0)
+    }
+
+    fun saveRotation(context: Context, fileName: String, degrees: Int) {
+        val f = store(context)
+        val obj = runCatching { if (f.exists()) JSONObject(f.readText()) else JSONObject() }.getOrDefault(JSONObject())
+        obj.put(fileName + "#rot", ((degrees % 360) + 360) % 360)
+        f.writeText(obj.toString())
+    }
+
     fun save(context: Context, fileName: String, texts: List<String>) {
         val f = store(context)
         val obj = runCatching { if (f.exists()) JSONObject(f.readText()) else JSONObject() }.getOrDefault(JSONObject())

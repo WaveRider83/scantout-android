@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
@@ -73,9 +74,11 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
     }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var zoomRatio by remember { mutableStateOf(1f) }
+
     var flashMode by remember { mutableStateOf(ImageCapture.FLASH_MODE_OFF) }
     var menuOpen by remember { mutableStateOf(false) }
     var barcodesOn by remember { mutableStateOf(Settings.barcodesEnabled(context)) }
+    var showAbout by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var lastCaptured by remember { mutableStateOf<File?>(null) }
     var capturing by remember { mutableStateOf(false) }
@@ -150,7 +153,12 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
 
         // Vignette dernière capture
         lastCaptured?.let { file ->
-            val bmp = remember(file) { CapturesStore.decodeBitmap(file)?.asImageBitmap() }
+            val bmp = remember(file) {
+                CapturesStore.decodeBitmap(file)?.let { b ->
+                    val rot = OcrSelectionStore.loadRotation(context, file.name)
+                    (if (rot % 360 == 0) b else rotateBitmapTop(b, rot.toFloat())).asImageBitmap()
+                }
+            }
             if (bmp != null) {
                 androidx.compose.foundation.Image(
                     bitmap = bmp,
@@ -208,7 +216,7 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         leadingIcon = { Icon(Icons.Default.QrCodeScanner, contentDescription = null) },
-                        text = { Text(if (barcodesOn) "QR / codes-barres : ON" else "QR / codes-barres : OFF") },
+                        text = { Text(if (barcodesOn) "QR / codes-barres : ON" else "QR / codes-barres : OFF (forcé par SN↔code-barres)") },
                         onClick = {
                             barcodesOn = !barcodesOn
                             Settings.setBarcodesEnabled(context, barcodesOn)
@@ -224,12 +232,28 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                         }
                     )
                     DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                        text = { Text("À propos") },
+                        onClick = { menuOpen = false; showAbout = true }
+                    )
+                    DropdownMenuItem(
                         text = { Text("Effacer l'historique…") },
                         onClick = { menuOpen = false; confirmClear = true }
                     )
                 }
             }
         }
+    }
+
+    if (showAbout) {
+        AlertDialog(
+            onDismissRequest = { showAbout = false },
+            title = { Text("Scantout") },
+            text = {
+                Text("Scantout v5.0.0\n\n© 2026 Cédric Burnotte. Tous droits réservés.\n\nApplication de scan et copie de zones de texte (OCR).\nUsage personnel. Toute reproduction ou distribution sans autorisation écrite de l'auteur est interdite.")
+            },
+            confirmButton = { TextButton(onClick = { showAbout = false }) { Text("OK") } }
+        )
     }
 
     if (confirmClear) {
