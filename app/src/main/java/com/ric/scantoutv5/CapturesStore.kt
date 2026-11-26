@@ -44,6 +44,19 @@ object CapturesStore {
         scansDir(context).listFiles()?.forEach { it.delete() }
     }
 
+    /** Copie une image choisie (URI) dans le dossier des scans. Retourne le fichier créé. */
+    fun importFromUri(context: Context, uri: android.net.Uri): File? {
+        return try {
+            val dest = newCaptureFile(context)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            } ?: return null
+            dest
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun list(context: Context): List<File> =
         scansDir(context).listFiles { f -> f.isFile && f.extension == "jpg" }
             ?.sortedByDescending { it.lastModified() }

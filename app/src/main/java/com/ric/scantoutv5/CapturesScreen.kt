@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -68,6 +69,14 @@ fun CapturesScreen(onBack: () -> Unit) {
     var selectionMode by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(setOf<String>()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            CapturesStore.importFromUri(context, uri)
+            captures = CapturesStore.list(context)
+        }
+    }
 
     BackHandler(enabled = selected != null || selectionMode) {
         if (selected != null) {
@@ -118,6 +127,10 @@ fun CapturesScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f)
             )
             if (!selectionMode) {
+                IconButton(onClick = { importLauncher.launch("image/*") }) {
+                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Importer une image",
+                        tint = MaterialTheme.colorScheme.primary)
+                }
                 IconButton(onClick = { viewMode = ViewMode.GRID }) {
                     Icon(Icons.Default.GridView, contentDescription = "Vignettes",
                         tint = if (viewMode == ViewMode.GRID) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
