@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -519,48 +520,67 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
         }
 
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            OutlinedButton(onClick = {
-                OcrSelectionStore.saveText(context, file.name, null)
-                runOcr()
-            }, enabled = !loading) { Text("Re-analyser") }
-            OutlinedButton(onClick = {
-                val bmp = bitmap ?: return@OutlinedButton
-                val targets = zones.filter { it.id in selectedIds }.ifEmpty { zones }
-                ppRunning = true
-                scope.launch {
-                    val texts = mutableMapOf<Int, PpOcrRec.RecResult>()
-                    withContext(Dispatchers.Default) {
-                        for (z in targets) {
-                            PpOcrRec.recognize(context, bmp, z.box)?.let { texts[z.id] = it }
-                        }
-                    }
-                    editedText = if (texts.isEmpty()) editedText
-                        else targets.joinToString("\n") { z -> texts[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
-                    val avg = if (texts.isEmpty()) 0f else texts.values.map { it.confidence }.average().toFloat()
-                    android.widget.Toast.makeText(context, "PP-OCR appliqué (confiance moyenne ${(avg*100).toInt()} %)", android.widget.Toast.LENGTH_SHORT).show()
-                    ppRunning = false
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(onClick = {
+                    OcrSelectionStore.saveText(context, file.name, null)
+                    runOcr()
+                }, enabled = !loading, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text("Re-analyser", style = MaterialTheme.typography.labelMedium)
                 }
-            }, enabled = !ppRunning && zones.isNotEmpty()) {
-                Text(if (ppRunning) "PP-OCR…" else "Vérifier (PP-OCR)")
+                OutlinedButton(onClick = {
+                    val bmp = bitmap ?: return@OutlinedButton
+                    val targets = zones.filter { it.id in selectedIds }.ifEmpty { zones }
+                    ppRunning = true
+                    scope.launch {
+                        val texts = mutableMapOf<Int, PpOcrRec.RecResult>()
+                        withContext(Dispatchers.Default) {
+                            for (z in targets) {
+                                PpOcrRec.recognize(context, bmp, z.box)?.let { texts[z.id] = it }
+                            }
+                        }
+                        editedText = if (texts.isEmpty()) editedText
+                            else targets.joinToString("\n") { z -> texts[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
+                        val avg = if (texts.isEmpty()) 0f else texts.values.map { it.confidence }.average().toFloat()
+                        android.widget.Toast.makeText(context, "PP-OCR appliqué (confiance moyenne ${(avg*100).toInt()} %)", android.widget.Toast.LENGTH_SHORT).show()
+                        ppRunning = false
+                    }
+                }, enabled = !ppRunning && zones.isNotEmpty(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(if (ppRunning) "PP-OCR…" else "Vérifier PP-OCR", style = MaterialTheme.typography.labelMedium)
+                }
+                Button(onClick = {
+                    OcrSelectionStore.saveText(context, file.name, editedText)
+                    android.widget.Toast.makeText(context, "Texte validé", android.widget.Toast.LENGTH_SHORT).show()
+                }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
+                    Text("Valider", style = MaterialTheme.typography.labelMedium)
+                }
             }
-            TextButton(onClick = {
-                selectedIds = zones.map { it.id }.toSet()
-                syncEditedFromSelection()
-            }) { Text("Tout", style = MaterialTheme.typography.labelSmall) }
-            TextButton(onClick = {
-                selectedIds = emptySet()
-                editedText = ""
-                OcrSelectionStore.save(context, file.name, emptyList())
-            }) { Text("Aucun", style = MaterialTheme.typography.labelSmall) }
-            Button(onClick = {
-                OcrSelectionStore.saveText(context, file.name, editedText)
-                android.widget.Toast.makeText(context, "Texte validé", android.widget.Toast.LENGTH_SHORT).show()
-            }) { Text("Valider") }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = {
+                    selectedIds = zones.map { it.id }.toSet()
+                    syncEditedFromSelection()
+                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+                    Text("Tout", style = MaterialTheme.typography.labelSmall)
+                }
+                TextButton(onClick = {
+                    selectedIds = emptySet()
+                    editedText = ""
+                    OcrSelectionStore.save(context, file.name, emptyList())
+                }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+                    Text("Aucun", style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
 
         OutlinedTextField(
