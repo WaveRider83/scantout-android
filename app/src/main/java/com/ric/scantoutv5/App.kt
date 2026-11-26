@@ -10,6 +10,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.BackHandler
 import com.ric.scantoutv5.theme.NeonPalette
 import com.ric.scantoutv5.theme.ScantoutTheme
 import com.ric.scantoutv5.theme.HudThemeConfig
@@ -30,6 +31,7 @@ fun App() {
             )
         ) {
         var screen by rememberSaveable { mutableStateOf(Screen.Camera) }
+        BackHandler(enabled = screen != Screen.Camera) { screen = Screen.Camera }
         Box(Modifier.fillMaxSize()) {
             when (screen) {
                 Screen.Camera -> CameraScreen(onOpenCaptures = { screen = Screen.Captures })

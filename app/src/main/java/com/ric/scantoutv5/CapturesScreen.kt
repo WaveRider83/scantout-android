@@ -11,6 +11,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -26,6 +28,10 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext as LCtx
+import android.content.Intent
+import androidx.core.content.FileProvider
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
@@ -41,6 +47,10 @@ fun CapturesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var captures by remember { mutableStateOf(CapturesStore.list(context)) }
     var selected by remember { mutableStateOf<File?>(null) }
+    BackHandler(enabled = selected != null) {
+        selected = null
+        captures = CapturesStore.list(context)
+    }
 
     val current = selected
     if (current != null) {
@@ -92,6 +102,7 @@ fun CapturesScreen(onBack: () -> Unit) {
 
 @Composable
 private fun CaptureDetail(file: File, onBack: () -> Unit) {
+    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
@@ -110,7 +121,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         val bmp = bitmap ?: return
         loading = true
         scope.launch {
-            val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp) }
+            val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
             zones = result
             selectedIds = result.map { it.id }.toSet()
             editedText = result.joinToString("\n") { it.text }
@@ -128,7 +139,19 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Retour") }
             Spacer(Modifier.width(8.dp))
-            Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.weight(1f))
+            IconButton(onClick = {
+                val uri = FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", file)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/jpeg"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    if (editedText.isNotBlank()) putExtra(Intent.EXTRA_TEXT, editedText)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Partager"))
+            }) {
+                Icon(Icons.Default.Share, contentDescription = "Partager")
+            }
         }
 
         if (bitmap != null && imageBitmap != null) {

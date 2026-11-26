@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
@@ -73,6 +74,7 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
     var zoomRatio by remember { mutableStateOf(1f) }
     var flashMode by remember { mutableStateOf(ImageCapture.FLASH_MODE_OFF) }
     var menuOpen by remember { mutableStateOf(false) }
+    var barcodesOn by remember { mutableStateOf(Settings.barcodesEnabled(context)) }
     var confirmClear by remember { mutableStateOf(false) }
     var lastCaptured by remember { mutableStateOf<File?>(null) }
     var capturing by remember { mutableStateOf(false) }
@@ -205,6 +207,14 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                     Icon(Icons.Default.Settings, contentDescription = "Options", tint = Color(0xFF00E5FF))
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.QrCodeScanner, contentDescription = null) },
+                        text = { Text(if (barcodesOn) "QR / codes-barres : ON" else "QR / codes-barres : OFF") },
+                        onClick = {
+                            barcodesOn = !barcodesOn
+                            Settings.setBarcodesEnabled(context, barcodesOn)
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Effacer l'historique…") },
                         onClick = { menuOpen = false; confirmClear = true }
