@@ -341,6 +341,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var editedText by remember { mutableStateOf("") }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    var blurry by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
 
@@ -349,6 +350,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         loading = true
         scope.launch {
             try {
+                blurry = withContext(Dispatchers.Default) { BlurDetector.isBlurry(bmp) }
                 val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
                 zones = result
                 selectedIds = result.map { it.id }.toSet()
@@ -362,6 +364,12 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     }
 
     LaunchedEffect(file.absolutePath) { runOcr() }
+
+    val ambiguousTokens = remember(editedText) {
+        Regex("[A-Za-z0-9]{4,}").findAll(editedText).map { it.value }
+            .filter { t -> t.any { it.isDigit() } && (t.contains('O') || t.contains('0') || t.contains('o')) }
+            .distinct().take(8).toList()
+    }
 
     fun syncEditedFromSelection() {
         editedText = zones.filter { it.id in selectedIds }.joinToString("\n") { it.text }
@@ -467,6 +475,23 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                 }
             }
             }
+        }
+
+        if (blurry) {
+            Text(
+                "⚠ Photo floue — stabilisez l'appareil ou rapprochez-vous, puis reprenez la capture.",
+                color = Color(0xFFFFB300),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+        if (ambiguousTokens.isNotEmpty()) {
+            Text(
+                "À vérifier (0/O) : " + ambiguousTokens.joinToString(", "),
+                color = Color(0xFFFFB300),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)
+            )
         }
 
         if (loading) {
