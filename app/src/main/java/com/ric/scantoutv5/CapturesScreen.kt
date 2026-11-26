@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -386,10 +387,17 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
 
         if (bitmap != null && imageBitmap != null) {
             val aspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+            val maxH = 340.dp
+            BoxWithConstraints(
+                Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+            val w = minOf(maxWidth, maxH * aspect)
+            val h = w / aspect
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(aspect)
+                    .size(w, h)
+                    .clipToBounds()
                     .clipToBounds()
                     .onGloballyPositioned { viewSize = it.size }
                     .pointerInput(Unit) {
@@ -456,6 +464,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                     }
                 }
                 }
+            }
             }
         }
 

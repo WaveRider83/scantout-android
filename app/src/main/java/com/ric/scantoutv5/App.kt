@@ -41,6 +41,7 @@ fun App() {
     )
     ScantoutTheme(HudThemeConfig()) {
         MaterialTheme(colorScheme = scheme) {
+        androidx.compose.material3.Surface(color = scheme.background, contentColor = scheme.onBackground) {
         var screen by rememberSaveable { mutableStateOf(Screen.Camera) }
         BackHandler(enabled = screen != Screen.Camera) { screen = Screen.Camera }
         Box(Modifier.fillMaxSize()) {
@@ -48,6 +49,7 @@ fun App() {
                 Screen.Camera -> CameraScreen(onOpenCaptures = { screen = Screen.Captures })
                 Screen.Captures -> CapturesScreen(onBack = { screen = Screen.Camera })
             }
+        }
         }
         }
     }
