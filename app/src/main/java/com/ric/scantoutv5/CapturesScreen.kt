@@ -422,7 +422,6 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             var prefix = line.substring(0, from)
             prefix = prefix.replace(Regex("""(?i)(S[/ ]?N)[Il1|]\s*$"""), "$1 ")
             val corrected = prefix + b.text.trim() + line.substring(to)
-            if (corrected != line) android.util.Log.d("ScantoutSN", "corrigé: «$line» -> «$corrected»")
             return corrected
         }
         return line

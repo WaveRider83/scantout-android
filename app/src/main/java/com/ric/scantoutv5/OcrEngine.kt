@@ -93,9 +93,7 @@ object OcrEngine {
             val scanner = BarcodeScanning.getClient()
             try {
                 val codes = scanner.process(image).awaitMain()
-                android.util.Log.d("ScantoutOCR", "barcodes detected: " + codes.size)
                 for (code in codes) {
-                    android.util.Log.d("ScantoutOCR", "barcode format=" + code.format + " raw=" + code.rawValue)
                     val box = code.boundingBox ?: continue
                     val value = code.rawValue ?: code.displayValue ?: continue
                     zones += TextZone(id++, sanitizeSn(value), box, isBarcode = true, rawValue = value)
