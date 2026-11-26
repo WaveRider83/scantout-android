@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
     implementation(libs.mlkit.text)
+    implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.barcode)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

@@ -342,19 +342,45 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var editedText by remember { mutableStateOf("") }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     var blurry by remember { mutableStateOf(false) }
+    var ppResults by remember { mutableStateOf<Map<Int, PpOcrRec.RecResult>>(emptyMap()) }
+    var ppRunning by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
+
+    fun applySelection(ids: Set<Int>) {
+        selectedIds = ids
+        editedText = zones.filter { it.id in ids }.joinToString("\n") { it.text }
+        OcrSelectionStore.save(context, file.name, zones.filter { it.id in ids }.map { it.text })
+    }
+
+    fun restoreSelection(result: List<TextZone>) {
+        val saved = OcrSelectionStore.load(context, file.name)
+        if (saved.isEmpty()) {
+            selectedIds = result.map { it.id }.toSet()
+            editedText = result.joinToString("\n") { it.text }
+            return
+        }
+        val remaining = saved.toMutableList()
+        val ids = mutableSetOf<Int>()
+        for (z in result) {
+            val i = remaining.indexOf(z.text)
+            if (i >= 0) { ids.add(z.id); remaining.removeAt(i) }
+        }
+        if (ids.isEmpty()) ids.addAll(result.map { it.id })
+        selectedIds = ids
+        editedText = result.filter { it.id in ids }.joinToString("\n") { it.text }
+    }
 
     fun runOcr() {
         val bmp = bitmap ?: return
         loading = true
+        ppResults = emptyMap()
         scope.launch {
             try {
                 blurry = withContext(Dispatchers.Default) { BlurDetector.isBlurry(bmp) }
                 val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
                 zones = result
-                selectedIds = result.map { it.id }.toSet()
-                editedText = result.joinToString("\n") { it.text }
+                restoreSelection(result)
             } catch (e: Exception) {
                 android.widget.Toast.makeText(context, "OCR échoué: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             } finally {
@@ -373,6 +399,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
 
     fun syncEditedFromSelection() {
         editedText = zones.filter { it.id in selectedIds }.joinToString("\n") { it.text }
+        OcrSelectionStore.save(context, file.name, zones.filter { it.id in selectedIds }.map { it.text })
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -504,6 +531,23 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         ) {
             OutlinedButton(onClick = { runOcr() }, enabled = !loading) { Text("Re-analyser") }
             OutlinedButton(onClick = {
+                val bmp = bitmap ?: return@OutlinedButton
+                val targets = zones.filter { it.id in selectedIds }.ifEmpty { zones }
+                ppRunning = true
+                scope.launch {
+                    val map = mutableMapOf<Int, PpOcrRec.RecResult>()
+                    withContext(Dispatchers.Default) {
+                        for (z in targets) {
+                            PpOcrRec.recognize(context, bmp, z.box)?.let { map[z.id] = it }
+                        }
+                    }
+                    ppResults = map
+                    ppRunning = false
+                }
+            }, enabled = !ppRunning && zones.isNotEmpty()) {
+                Text(if (ppRunning) "PP-OCR…" else "Vérifier (PP-OCR)")
+            }
+            OutlinedButton(onClick = {
                 selectedIds = zones.map { it.id }.toSet()
                 syncEditedFromSelection()
             }) { Text("Tout") }
@@ -511,6 +555,29 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
                 selectedIds = emptySet()
                 editedText = ""
             }) { Text("Aucun") }
+        }
+
+        if (ppResults.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .padding(10.dp)
+            ) {
+                Text("PP-OCR (2ᵉ avis)", style = MaterialTheme.typography.labelLarge)
+                ppResults.forEach { (id, res) ->
+                    val z = zones.find { it.id == id }
+                    val low = res.confidence < 0.75f
+                    Text(
+                        text = "${z?.text ?: "?"}  →  ${res.text}  (${(res.confidence * 100).toInt()} %)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (low) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                TextButton(onClick = {
+                    editedText = zones.filter { it.id in selectedIds }
+                        .joinToString("\n") { z -> ppResults[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
+                }) { Text("Utiliser le texte PP-OCR") }
+            }
         }
 
         OutlinedTextField(
