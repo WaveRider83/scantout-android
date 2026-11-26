@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
@@ -114,18 +115,24 @@ fun CapturesScreen(onBack: () -> Unit) {
         return
     }
 
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         // Barre haute : retour + titre + modes d'affichage + sélection
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onBack) { Text("← Retour") }
-            Text(
-                if (selectionMode) "${checked.size} sélectionnée(s)" else "Historique (${captures.size})",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f)
-            )
+            if (selectionMode) {
+                Text("${checked.size} sélectionnée(s)", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            IconButton(onClick = {
+                Settings.setDarkTheme(context, !Settings.darkTheme(context))
+                (context as? android.app.Activity)?.recreate()
+            }) {
+                Icon(Icons.Default.Brightness6, contentDescription = "Basculer thème")
+            }
             if (!selectionMode) {
                 IconButton(onClick = { importLauncher.launch("image/*") }) {
                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Importer une image",
@@ -339,11 +346,16 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
         val bmp = bitmap ?: return
         loading = true
         scope.launch {
-            val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
-            zones = result
-            selectedIds = result.map { it.id }.toSet()
-            editedText = result.joinToString("\n") { it.text }
-            loading = false
+            try {
+                val result = withContext(Dispatchers.Default) { OcrEngine.recognize(bmp, Settings.barcodesEnabled(context)) }
+                zones = result
+                selectedIds = result.map { it.id }.toSet()
+                editedText = result.joinToString("\n") { it.text }
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "OCR échoué: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+            } finally {
+                loading = false
+            }
         }
     }
 

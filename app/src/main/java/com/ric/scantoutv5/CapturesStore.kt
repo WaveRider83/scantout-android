@@ -17,9 +17,15 @@ object CapturesStore {
         return File(scansDir(context), "scan_$stamp.jpg")
     }
 
-    /** Décode en appliquant l'orientation EXIF (photo affichée dans le sens de la capture). */
-    fun decodeBitmap(file: File): android.graphics.Bitmap? {
-        val raw = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+    /** Décode en appliquant l'orientation EXIF, en bornant la taille (maxDim px). */
+    fun decodeBitmap(file: File, maxDim: Int = 1600): android.graphics.Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        var sample = 1
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longest / sample > maxDim) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val raw = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return null
         return try {
             val exif = androidx.exifinterface.media.ExifInterface(file.absolutePath)
             val matrix = android.graphics.Matrix()

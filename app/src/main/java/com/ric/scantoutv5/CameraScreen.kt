@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
@@ -213,6 +214,15 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
                         onClick = {
                             barcodesOn = !barcodesOn
                             Settings.setBarcodesEnabled(context, barcodesOn)
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Brightness6, contentDescription = null) },
+                        text = { Text(if (Settings.darkTheme(context)) "Thème : sombre" else "Thème : clair") },
+                        onClick = {
+                            Settings.setDarkTheme(context, !Settings.darkTheme(context))
+                            menuOpen = false
+                            (context as? android.app.Activity)?.recreate()
                         }
                     )
                     DropdownMenuItem(
