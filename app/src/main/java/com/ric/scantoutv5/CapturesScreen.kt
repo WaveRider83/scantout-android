@@ -342,7 +342,6 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var editedText by remember { mutableStateOf("") }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     var blurry by remember { mutableStateOf(false) }
-    var ppResults by remember { mutableStateOf<Map<Int, PpOcrRec.RecResult>>(emptyMap()) }
     var ppRunning by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -355,26 +354,20 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
 
     fun restoreSelection(result: List<TextZone>) {
         val saved = OcrSelectionStore.load(context, file.name)
-        if (saved.isEmpty()) {
-            selectedIds = result.map { it.id }.toSet()
-            editedText = result.joinToString("\n") { it.text }
-            return
-        }
         val remaining = saved.toMutableList()
         val ids = mutableSetOf<Int>()
         for (z in result) {
             val i = remaining.indexOf(z.text)
             if (i >= 0) { ids.add(z.id); remaining.removeAt(i) }
         }
-        if (ids.isEmpty()) ids.addAll(result.map { it.id })
         selectedIds = ids
-        editedText = result.filter { it.id in ids }.joinToString("\n") { it.text }
+        val validated = OcrSelectionStore.loadText(context, file.name)
+        editedText = validated ?: result.filter { it.id in ids }.joinToString("\n") { it.text }
     }
 
     fun runOcr() {
         val bmp = bitmap ?: return
         loading = true
-        ppResults = emptyMap()
         scope.launch {
             try {
                 blurry = withContext(Dispatchers.Default) { BlurDetector.isBlurry(bmp) }
@@ -529,55 +522,43 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedButton(onClick = { runOcr() }, enabled = !loading) { Text("Re-analyser") }
+            OutlinedButton(onClick = {
+                OcrSelectionStore.saveText(context, file.name, null)
+                runOcr()
+            }, enabled = !loading) { Text("Re-analyser") }
             OutlinedButton(onClick = {
                 val bmp = bitmap ?: return@OutlinedButton
                 val targets = zones.filter { it.id in selectedIds }.ifEmpty { zones }
                 ppRunning = true
                 scope.launch {
-                    val map = mutableMapOf<Int, PpOcrRec.RecResult>()
+                    val texts = mutableMapOf<Int, PpOcrRec.RecResult>()
                     withContext(Dispatchers.Default) {
                         for (z in targets) {
-                            PpOcrRec.recognize(context, bmp, z.box)?.let { map[z.id] = it }
+                            PpOcrRec.recognize(context, bmp, z.box)?.let { texts[z.id] = it }
                         }
                     }
-                    ppResults = map
+                    editedText = if (texts.isEmpty()) editedText
+                        else targets.joinToString("\n") { z -> texts[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
+                    val avg = if (texts.isEmpty()) 0f else texts.values.map { it.confidence }.average().toFloat()
+                    android.widget.Toast.makeText(context, "PP-OCR appliqué (confiance moyenne ${(avg*100).toInt()} %)", android.widget.Toast.LENGTH_SHORT).show()
                     ppRunning = false
                 }
             }, enabled = !ppRunning && zones.isNotEmpty()) {
                 Text(if (ppRunning) "PP-OCR…" else "Vérifier (PP-OCR)")
             }
-            OutlinedButton(onClick = {
+            TextButton(onClick = {
                 selectedIds = zones.map { it.id }.toSet()
                 syncEditedFromSelection()
-            }) { Text("Tout") }
-            OutlinedButton(onClick = {
+            }) { Text("Tout", style = MaterialTheme.typography.labelSmall) }
+            TextButton(onClick = {
                 selectedIds = emptySet()
                 editedText = ""
-            }) { Text("Aucun") }
-        }
-
-        if (ppResults.isNotEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    .padding(10.dp)
-            ) {
-                Text("PP-OCR (2ᵉ avis)", style = MaterialTheme.typography.labelLarge)
-                ppResults.forEach { (id, res) ->
-                    val z = zones.find { it.id == id }
-                    val low = res.confidence < 0.75f
-                    Text(
-                        text = "${z?.text ?: "?"}  →  ${res.text}  (${(res.confidence * 100).toInt()} %)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (low) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                TextButton(onClick = {
-                    editedText = zones.filter { it.id in selectedIds }
-                        .joinToString("\n") { z -> ppResults[z.id]?.text?.takeIf { it.isNotBlank() } ?: z.text }
-                }) { Text("Utiliser le texte PP-OCR") }
-            }
+                OcrSelectionStore.save(context, file.name, emptyList())
+            }) { Text("Aucun", style = MaterialTheme.typography.labelSmall) }
+            Button(onClick = {
+                OcrSelectionStore.saveText(context, file.name, editedText)
+                android.widget.Toast.makeText(context, "Texte validé", android.widget.Toast.LENGTH_SHORT).show()
+            }) { Text("Valider") }
         }
 
         OutlinedTextField(

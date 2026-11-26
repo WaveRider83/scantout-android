@@ -20,6 +20,19 @@ object OcrSelectionStore {
         }.getOrDefault(emptyList())
     }
 
+    fun loadText(context: Context, fileName: String): String? {
+        val f = store(context)
+        if (!f.exists()) return null
+        return runCatching { JSONObject(f.readText()).optString(fileName + "#text", null) }.getOrNull()
+    }
+
+    fun saveText(context: Context, fileName: String, text: String?) {
+        val f = store(context)
+        val obj = runCatching { if (f.exists()) JSONObject(f.readText()) else JSONObject() }.getOrDefault(JSONObject())
+        if (text == null) obj.remove(fileName + "#text") else obj.put(fileName + "#text", text)
+        f.writeText(obj.toString())
+    }
+
     fun save(context: Context, fileName: String, texts: List<String>) {
         val f = store(context)
         val obj = runCatching { if (f.exists()) JSONObject(f.readText()) else JSONObject() }.getOrDefault(JSONObject())
