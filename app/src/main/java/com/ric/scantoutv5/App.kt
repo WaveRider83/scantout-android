@@ -2,15 +2,6 @@ package com.ric.scantoutv5
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -53,46 +44,6 @@ fun App() {
         MaterialTheme(colorScheme = scheme) {
         androidx.compose.material3.Surface(color = scheme.background, contentColor = scheme.onBackground) {
         var screen by rememberSaveable { mutableStateOf(Screen.Camera) }
-        var updateInfo by androidx.compose.runtime.remember { mutableStateOf<UpdateInfo?>(null) }
-        var updateProgress by androidx.compose.runtime.remember { mutableStateOf<Float?>(null) }
-        var updateError by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
-        val scope = androidx.compose.runtime.rememberCoroutineScope()
-        LaunchedEffect(Unit) {
-            updateInfo = checkForUpdate(context)
-        }
-        updateInfo?.let { info ->
-            AlertDialog(
-                onDismissRequest = { if (updateProgress == null) updateInfo = null },
-                title = { Text("Mise à jour v${info.version} disponible") },
-                text = {
-                    Column {
-                        Text("Une nouvelle version de Scantout est disponible.")
-                        updateProgress?.let { p ->
-                            androidx.compose.foundation.layout.Spacer(Modifier.padding(4.dp))
-                            LinearProgressIndicator(progress = { p }, modifier = Modifier)
-                        }
-                        updateError?.let { Text(it, color = androidx.compose.ui.graphics.Color(0xFFCF6679)) }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        enabled = updateProgress == null,
-                        onClick = {
-                            updateError = null
-                            updateProgress = 0f
-                            scope.launch {
-                                val err = downloadAndInstall(context, info) { p -> updateProgress = p }
-                                updateProgress = null
-                                if (err != null) updateError = err else updateInfo = null
-                            }
-                        }
-                    ) { Text("Mettre à jour") }
-                },
-                dismissButton = {
-                    androidx.compose.material3.TextButton(onClick = { updateInfo = null }, enabled = updateProgress == null) { Text("Plus tard") }
-                }
-            )
-        }
         BackHandler(enabled = screen != Screen.Camera) { screen = Screen.Camera }
         Box(Modifier.fillMaxSize().safeDrawingPadding()) {
             when (screen) {

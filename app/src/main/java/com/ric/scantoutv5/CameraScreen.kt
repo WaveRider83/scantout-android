@@ -246,14 +246,7 @@ fun CameraScreen(onOpenCaptures: () -> Unit) {
     }
 
     if (showAbout) {
-        AlertDialog(
-            onDismissRequest = { showAbout = false },
-            title = { Text("Scantout") },
-            text = {
-                Text("Scantout v5.0.0\n\n© 2026 Cédric Burnotte. Tous droits réservés.\n\nApplication de scan et copie de zones de texte (OCR).\nUsage personnel. Toute reproduction ou distribution sans autorisation écrite de l'auteur est interdite.")
-            },
-            confirmButton = { TextButton(onClick = { showAbout = false }) { Text("OK") } }
-        )
+        AboutDialog(onDismiss = { showAbout = false })
     }
 
     if (confirmClear) {

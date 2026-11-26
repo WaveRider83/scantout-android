@@ -55,7 +55,7 @@ suspend fun checkForUpdate(context: Context): UpdateInfo? = withContext(Dispatch
         }
         null
     } catch (e: Exception) {
-        null // pas de réseau / API down : on n'embête pas l'utilisateur
+        throw e
     }
 }
 
