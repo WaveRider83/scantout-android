@@ -64,6 +64,114 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+private fun ocrTextOf(context: android.content.Context, f: File): String? =
+    OcrSelectionStore.loadText(context, f.name)?.takeIf { it.isNotBlank() }
+        ?: OcrSelectionStore.load(context, f.name).joinToString("\n").takeIf { it.isNotBlank() }
+
+private fun sharePlainText(context: android.content.Context, files: List<File>): String =
+    files.mapNotNull { f -> ocrTextOf(context, f)?.let { "— ${f.name} —\n$it" } }.joinToString("\n\n")
+
+// PDF : une page par capture, image au-dessus du texte OCR.
+private fun buildSharePdf(context: android.content.Context, files: List<File>): File? = runCatching {
+    val doc = android.graphics.pdf.PdfDocument()
+    val pageW = 595; val pageH = 842; val margin = 36f
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = android.graphics.Color.BLACK }
+    val headPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; color = android.graphics.Color.GRAY }
+    for (f in files) {
+        var pageNum = 1
+        var page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageW, pageH, pageNum).create())
+        var canvas = page.canvas
+        var y = margin + headPaint.textSize
+        canvas.drawText(f.name, margin, y, headPaint)
+        y += 8f
+        loadRotatedBitmap(context, f)?.let { bmp ->
+            val maxW = pageW - 2 * margin
+            val maxH = pageH * 0.55f
+            val scale = minOf(maxW / bmp.width, maxH / bmp.height, 1f)
+            val w = bmp.width * scale; val h = bmp.height * scale
+            canvas.drawBitmap(bmp, null, android.graphics.RectF(margin, y, margin + w, y + h), paint)
+            y += h + 12f
+        }
+        fun newPageIfNeeded() {
+            if (y > pageH - margin) {
+                doc.finishPage(page)
+                pageNum += 1
+                page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageW, pageH, pageNum).create())
+                canvas = page.canvas
+                y = margin + textPaint.textSize
+            }
+        }
+        ocrTextOf(context, f)?.let { t ->
+            for (rawLine in t.lines()) {
+                var line = rawLine
+                while (line.isNotEmpty()) {
+                    var count = textPaint.breakText(line, true, pageW - 2 * margin, null)
+                    if (count <= 0) count = line.length
+                    newPageIfNeeded()
+                    canvas.drawText(line.substring(0, count), margin, y, textPaint)
+                    y += textPaint.textSize * 1.35f
+                    line = line.substring(count)
+                }
+            }
+        }
+        doc.finishPage(page)
+    }
+    val dir = java.io.File(context.cacheDir, "update").apply { mkdirs() }
+    val out = java.io.File(dir, "captures_ocr.pdf")
+    out.outputStream().use { doc.writeTo(it) }
+    doc.close()
+    out
+}.getOrNull()
+
+private fun shareCaptures(context: android.content.Context, files: List<File>, asPdf: Boolean) {
+    if (files.isEmpty()) return
+    val plainText = sharePlainText(context, files)
+    if (asPdf) {
+        val pdfFile = buildSharePdf(context, files)
+        if (pdfFile != null) {
+            val pdfUri = FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", pdfFile)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, pdfUri)
+                if (plainText.isNotBlank()) putExtra(Intent.EXTRA_TEXT, plainText)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Partager ${files.size} capture(s) en PDF"))
+            return
+        }
+    }
+    val uris = ArrayList(files.map {
+        FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", it)
+    })
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "image/jpeg"
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        if (plainText.isNotBlank()) putExtra(Intent.EXTRA_TEXT, plainText)
+        clipData = android.content.ClipData.newUri(context.contentResolver, "captures", uris.first()).apply {
+            uris.drop(1).forEach { addItem(android.content.ClipData.Item(it)) }
+        }
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Partager ${files.size} image(s)"))
+}
+
+@Composable
+private fun ShareFormatDialog(files: List<File>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Partager ${files.size} capture(s)") },
+        text = { Text("Format du partage — le texte OCR est toujours inclus dans le corps du mail.") },
+        confirmButton = {
+            TextButton(onClick = { onDismiss(); shareCaptures(context, files, asPdf = true) }) { Text("PDF") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDismiss(); shareCaptures(context, files, asPdf = false) }) { Text("Images") }
+        }
+    )
+}
+
 private enum class ViewMode { GRID, LIST, DETAIL }
 
 private fun fmtDate(f: File): String =
@@ -122,17 +230,11 @@ fun CapturesScreen(onBack: () -> Unit) {
         checked = if (f.absolutePath in checked) checked - f.absolutePath else checked + f.absolutePath
     }
 
+    var shareDialog by remember { mutableStateOf<List<File>?>(null) }
     fun shareFiles(files: List<File>) {
         if (files.isEmpty()) return
-        val uris = ArrayList(files.map {
-            FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", it)
-        })
-        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "image/jpeg"
-            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(intent, "Partager ${files.size} image(s)"))
+        val order = captures.map { it.absolutePath }
+        shareDialog = files.sortedBy { order.indexOf(it.absolutePath) }
     }
 
     val current = selected
@@ -335,6 +437,8 @@ fun CapturesScreen(onBack: () -> Unit) {
         }
     }
 
+    shareDialog?.let { files -> ShareFormatDialog(files) { shareDialog = null } }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -376,6 +480,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var hlDoubts by remember { mutableStateOf(Settings.highlightDoubts(context)) }
     var showQrZone by remember { mutableStateOf(Settings.showBarcodeZone(context)) }
     var restored by remember { mutableStateOf(false) }
+    var shareDetailDialog by remember { mutableStateOf(false) }
 
     fun normPp(s: String) = s.filter { !it.isWhitespace() }.uppercase()
     // Réinjecte les caractères PP-OCR dans la trame ML Kit (espaces/séparateurs conservés).
@@ -600,14 +705,8 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.weight(1f))
             IconButton(onClick = {
-                val uri = FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", file)
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "image/jpeg"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    if (editedText.isNotBlank()) putExtra(Intent.EXTRA_TEXT, editedText)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(intent, "Partager"))
+                OcrSelectionStore.saveText(context, file.name, editedText)
+                shareDetailDialog = true
             }) {
                 Icon(Icons.Default.Share, contentDescription = "Partager")
             }
@@ -797,5 +896,8 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             enabled = editedText.isNotBlank(),
             modifier = Modifier.fillMaxWidth().padding(12.dp)
         ) { Text("Copier") }
+    }
+    if (shareDetailDialog) {
+        ShareFormatDialog(listOf(file)) { shareDetailDialog = false }
     }
 }
