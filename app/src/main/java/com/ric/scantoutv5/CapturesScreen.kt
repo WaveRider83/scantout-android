@@ -587,6 +587,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit, onRenamed: (File) -> U
     var restored by remember { mutableStateOf(false) }
     var shareDetailDialog by remember { mutableStateOf(false) }
     var renameDialog by remember { mutableStateOf(false) }
+    var reanalyzeConfirm by remember { mutableStateOf(false) }
 
     fun normPp(s: String) = s.filter { !it.isWhitespace() }.uppercase()
     // Réinjecte les caractères PP-OCR dans la trame ML Kit (espaces/séparateurs conservés).
@@ -758,7 +759,10 @@ private fun CaptureDetail(file: File, onBack: () -> Unit, onRenamed: (File) -> U
                         }
                         ppResults = ppResults + pp
                         val sel = displayZones(result).filter { it.id in ids }
-                        editedText = renderWithPp(sel, ppResults)
+                        // Ne pas écraser un texte validé/mémorisé par la ré-analyse PP-OCR
+                        if (OcrSelectionStore.loadText(context, file.name) == null) {
+                            editedText = renderWithPp(sel, ppResults)
+                        }
                         ppRunning = false
                     }
                 }
@@ -972,8 +976,12 @@ private fun CaptureDetail(file: File, onBack: () -> Unit, onRenamed: (File) -> U
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedButton(onClick = {
-                    OcrSelectionStore.saveText(context, file.name, null)
-                    runOcr(resetSelection = true)
+                    if (OcrSelectionStore.loadText(context, file.name) != null) {
+                        reanalyzeConfirm = true
+                    } else {
+                        OcrSelectionStore.saveText(context, file.name, null)
+                        runOcr(resetSelection = true)
+                    }
                 }, enabled = !loading, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     Text("Re-analyser", style = MaterialTheme.typography.labelMedium)
                 }
@@ -1008,6 +1016,21 @@ private fun CaptureDetail(file: File, onBack: () -> Unit, onRenamed: (File) -> U
     }
     if (shareDetailDialog) {
         ShareFormatDialog(listOf(file)) { shareDetailDialog = false }
+    }
+    if (reanalyzeConfirm) {
+        AlertDialog(
+            onDismissRequest = { reanalyzeConfirm = false },
+            title = { Text("Re-analyser ?") },
+            text = { Text("Un texte OCR a été mémorisé pour cette capture. La re-analyse va l'écraser définitivement.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    reanalyzeConfirm = false
+                    OcrSelectionStore.saveText(context, file.name, null)
+                    runOcr(resetSelection = true)
+                }) { Text("Re-analyser") }
+            },
+            dismissButton = { TextButton(onClick = { reanalyzeConfirm = false }) { Text("Annuler") } }
+        )
     }
     if (renameDialog) {
         RenameCaptureDialog(
