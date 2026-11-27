@@ -218,6 +218,34 @@ private fun RenameCaptureDialog(file: File, suggestions: List<String>, onDismiss
     )
 }
 
+private fun saveToPhone(context: android.content.Context, files: List<File>, asPdf: Boolean, baseName: String): Boolean {
+    val safe = sanitizeFileName(baseName)
+    fun putFile(displayName: String, mime: String, source: File): Boolean = runCatching {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Scantout")
+            }
+            val uri = context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+            context.contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } } != null
+        } else {
+            val dir = java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Scantout").apply { mkdirs() }
+            source.copyTo(java.io.File(dir, displayName), overwrite = true)
+            true
+        }
+    }.getOrDefault(false)
+    return if (asPdf) {
+        val pdf = buildSharePdf(context, files, safe) ?: return false
+        putFile("$safe.pdf", "application/pdf", pdf)
+    } else {
+        files.indices.all { i ->
+            val name = if (files.size == 1) "$safe.jpg" else "${safe}_${i + 1}.jpg"
+            putFile(name, "image/jpeg", files[i])
+        }
+    }
+}
+
 @Composable
 private fun ShareFormatDialog(files: List<File>, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -255,7 +283,18 @@ private fun ShareFormatDialog(files: List<File>, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = { onDismiss(); shareCaptures(context, files, step, name) }) { Text("Partager") }
+            Row {
+                TextButton(onClick = {
+                    val ok = saveToPhone(context, files, step, name)
+                    android.widget.Toast.makeText(
+                        context,
+                        if (ok) "Enregistré dans Téléchargements/Scantout" else "Échec de l'enregistrement",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    if (ok) onDismiss()
+                }) { Text("Enregistrer") }
+                TextButton(onClick = { onDismiss(); shareCaptures(context, files, step, name) }) { Text("Partager") }
+            }
         },
         dismissButton = {
             TextButton(onClick = { asPdf = null }) { Text("Retour") }
