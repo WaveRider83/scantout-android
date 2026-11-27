@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
@@ -202,6 +204,10 @@ fun rotateBitmapTop(src: android.graphics.Bitmap, degrees: Float): android.graph
 fun CapturesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var captures by remember { mutableStateOf(CapturesStore.list(context)) }
+    var ascending by remember { mutableStateOf(true) }
+    val shown = remember(captures, ascending) {
+        if (ascending) captures.sortedBy { it.lastModified() } else captures.sortedByDescending { it.lastModified() }
+    }
     var selected by remember { mutableStateOf<File?>(null) }
     var viewMode by remember { mutableStateOf(ViewMode.GRID) }
     var selectionMode by remember { mutableStateOf(false) }
@@ -233,7 +239,7 @@ fun CapturesScreen(onBack: () -> Unit) {
     var shareDialog by remember { mutableStateOf<List<File>?>(null) }
     fun shareFiles(files: List<File>) {
         if (files.isEmpty()) return
-        val order = captures.map { it.absolutePath }
+        val order = shown.map { it.absolutePath }
         shareDialog = files.sortedBy { order.indexOf(it.absolutePath) }
     }
 
@@ -281,9 +287,16 @@ fun CapturesScreen(onBack: () -> Unit) {
                     Icon(Icons.Default.ViewAgenda, contentDescription = "Détail",
                         tint = if (viewMode == ViewMode.DETAIL) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                 }
+                IconButton(onClick = { ascending = !ascending }) {
+                    Icon(
+                        if (ascending) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (ascending) "Ordre chronologique (ancien → récent)" else "Ordre anti-chronologique (récent → ancien)",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
             } else {
                 IconButton(onClick = {
-                    shareFiles(captures.filter { it.absolutePath in checked })
+                    shareFiles(shown.filter { it.absolutePath in checked })
                 }, enabled = checked.isNotEmpty()) {
                     Icon(Icons.Default.Share, contentDescription = "Partager la sélection",
                         tint = if (checked.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -298,7 +311,7 @@ fun CapturesScreen(onBack: () -> Unit) {
             }
         }
 
-        if (captures.isEmpty()) {
+        if (shown.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Aucune capture")
             }
@@ -311,7 +324,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(captures, key = { it.absolutePath }) { file ->
+                    items(shown, key = { it.absolutePath }) { file ->
                         val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -346,7 +359,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(captures, key = { it.absolutePath }) { file ->
+                    items(shown, key = { it.absolutePath }) { file ->
                         val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Row(
@@ -386,7 +399,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(captures, key = { it.absolutePath }) { file ->
+                    items(shown, key = { it.absolutePath }) { file ->
                         val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Card(
