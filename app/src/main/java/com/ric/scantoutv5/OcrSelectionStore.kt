@@ -52,4 +52,21 @@ object OcrSelectionStore {
         if (texts.isEmpty()) obj.remove(fileName) else obj.put(fileName, org.json.JSONArray(texts))
         f.writeText(obj.toString())
     }
+
+    /** Renomme les clés associées à un fichier (sélection, texte, rotation). */
+    fun renameKeys(context: Context, oldName: String, newName: String) {
+        val f = store(context)
+        if (!f.exists()) return
+        runCatching {
+            val obj = JSONObject(f.readText())
+            for (suffix in listOf("", "#text", "#rot")) {
+                val oldKey = oldName + suffix
+                if (obj.has(oldKey)) {
+                    obj.put(newName + suffix, obj.get(oldKey))
+                    obj.remove(oldKey)
+                }
+            }
+            f.writeText(obj.toString())
+        }
+    }
 }

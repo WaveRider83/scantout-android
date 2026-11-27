@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewList
@@ -74,7 +75,22 @@ private fun sharePlainText(context: android.content.Context, files: List<File>):
     files.mapNotNull { f -> ocrTextOf(context, f)?.let { "— ${f.name} —\n$it" } }.joinToString("\n\n")
 
 // PDF : une page par capture, image au-dessus du texte OCR.
-private fun buildSharePdf(context: android.content.Context, files: List<File>): File? = runCatching {
+private fun sanitizeFileName(raw: String): String {
+    val cleaned = raw.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .replace(Regex("\\s+"), "_").trim('_').take(60)
+    return cleaned.ifBlank { "captures_ocr" }
+}
+
+private fun shareSuggestions(context: android.content.Context, files: List<File>): List<String> =
+    files.asSequence()
+        .flatMap { ocrTextOf(context, it)?.lines()?.asSequence() ?: emptySequence() }
+        .map { it.trim() }
+        .filter { it.length >= 4 }
+        .distinct()
+        .take(4)
+        .toList()
+
+private fun buildSharePdf(context: android.content.Context, files: List<File>, baseName: String): File? = runCatching {
     val doc = android.graphics.pdf.PdfDocument()
     val pageW = 595; val pageH = 842; val margin = 36f
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
@@ -120,17 +136,18 @@ private fun buildSharePdf(context: android.content.Context, files: List<File>): 
         doc.finishPage(page)
     }
     val dir = java.io.File(context.cacheDir, "update").apply { mkdirs() }
-    val out = java.io.File(dir, "captures_ocr.pdf")
+    val out = java.io.File(dir, "$baseName.pdf")
     out.outputStream().use { doc.writeTo(it) }
     doc.close()
     out
 }.getOrNull()
 
-private fun shareCaptures(context: android.content.Context, files: List<File>, asPdf: Boolean) {
+private fun shareCaptures(context: android.content.Context, files: List<File>, asPdf: Boolean, baseName: String) {
     if (files.isEmpty()) return
     val plainText = sharePlainText(context, files)
+    val safe = sanitizeFileName(baseName)
     if (asPdf) {
-        val pdfFile = buildSharePdf(context, files)
+        val pdfFile = buildSharePdf(context, files, safe)
         if (pdfFile != null) {
             val pdfUri = FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", pdfFile)
             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -143,8 +160,12 @@ private fun shareCaptures(context: android.content.Context, files: List<File>, a
             return
         }
     }
-    val uris = ArrayList(files.map {
-        FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", it)
+    val cacheDir = java.io.File(context.cacheDir, "update").apply { mkdirs() }
+    val uris = ArrayList(files.mapIndexed { i, f ->
+        val name = if (files.size == 1) "$safe.jpg" else "${safe}_${i + 1}.jpg"
+        val dest = java.io.File(cacheDir, name)
+        val ok = runCatching { f.copyTo(dest, overwrite = true) }.isSuccess
+        FileProvider.getUriForFile(context, "com.ric.scantoutv5.fileprovider", if (ok) dest else f)
     })
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = "image/jpeg"
@@ -159,17 +180,85 @@ private fun shareCaptures(context: android.content.Context, files: List<File>, a
 }
 
 @Composable
-private fun ShareFormatDialog(files: List<File>, onDismiss: () -> Unit) {
+private fun RenameCaptureDialog(file: File, suggestions: List<String>, onDismiss: () -> Unit, onRenamed: (File) -> Unit) {
     val context = LocalContext.current
+    var name by remember(file.absolutePath) { mutableStateOf(file.nameWithoutExtension) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Partager ${files.size} capture(s)") },
-        text = { Text("Format du partage — le texte OCR est toujours inclus dans le corps du mail.") },
+        title = { Text("Renommer la capture") },
+        text = {
+            Column {
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Nom") })
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Suggestions (détections OCR) :", style = MaterialTheme.typography.labelMedium)
+                    suggestions.forEach { s ->
+                        TextButton(onClick = { name = s }) { Text(s, maxLines = 1) }
+                    }
+                }
+            }
+        },
         confirmButton = {
-            TextButton(onClick = { onDismiss(); shareCaptures(context, files, asPdf = true) }) { Text("PDF") }
+            TextButton(onClick = {
+                val safe = sanitizeFileName(name)
+                val dir = file.parentFile
+                var target = File(dir, "$safe.jpg")
+                var i = 1
+                while (target.exists() && target.absolutePath != file.absolutePath) {
+                    target = File(dir, "${safe}_$i.jpg"); i++
+                }
+                if (file.renameTo(target)) {
+                    OcrSelectionStore.renameKeys(context, file.name, target.name)
+                    onDismiss()
+                    onRenamed(target)
+                }
+            }) { Text("Renommer") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } }
+    )
+}
+
+@Composable
+private fun ShareFormatDialog(files: List<File>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val suggestions = remember(files) { shareSuggestions(context, files) }
+    var asPdf by remember { mutableStateOf<Boolean?>(null) }
+    var name by remember(files) { mutableStateOf(suggestions.firstOrNull() ?: "captures_ocr") }
+    val step = asPdf
+    if (step == null) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Partager ${files.size} capture(s)") },
+            text = { Text("Format du partage — le texte OCR est toujours inclus dans le corps du mail.") },
+            confirmButton = {
+                TextButton(onClick = { asPdf = true }) { Text("PDF") }
+            },
+            dismissButton = {
+                TextButton(onClick = { asPdf = false }) { Text("Images") }
+            }
+        )
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nom du fichier") },
+        text = {
+            Column {
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Nom") })
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Suggestions (détections OCR) :", style = MaterialTheme.typography.labelMedium)
+                    suggestions.forEach { s ->
+                        TextButton(onClick = { name = s }) { Text(s, maxLines = 1) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDismiss(); shareCaptures(context, files, step, name) }) { Text("Partager") }
         },
         dismissButton = {
-            TextButton(onClick = { onDismiss(); shareCaptures(context, files, asPdf = false) }) { Text("Images") }
+            TextButton(onClick = { asPdf = null }) { Text("Retour") }
         }
     )
 }
@@ -247,6 +336,9 @@ fun CapturesScreen(onBack: () -> Unit) {
     if (current != null) {
         CaptureDetail(file = current, onBack = {
             selected = null
+            captures = CapturesStore.list(context)
+        }, onRenamed = { newFile ->
+            selected = newFile
             captures = CapturesStore.list(context)
         })
         return
@@ -472,7 +564,7 @@ fun CapturesScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun CaptureDetail(file: File, onBack: () -> Unit) {
+private fun CaptureDetail(file: File, onBack: () -> Unit, onRenamed: (File) -> Unit = {}) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -494,6 +586,7 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     var showQrZone by remember { mutableStateOf(Settings.showBarcodeZone(context)) }
     var restored by remember { mutableStateOf(false) }
     var shareDetailDialog by remember { mutableStateOf(false) }
+    var renameDialog by remember { mutableStateOf(false) }
 
     fun normPp(s: String) = s.filter { !it.isWhitespace() }.uppercase()
     // Réinjecte les caractères PP-OCR dans la trame ML Kit (espaces/séparateurs conservés).
@@ -723,6 +816,9 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
             }) {
                 Icon(Icons.Default.Share, contentDescription = "Partager")
             }
+            IconButton(onClick = { renameDialog = true }) {
+                Icon(Icons.Default.Edit, contentDescription = "Renommer")
+            }
         }
 
         val curBitmap = bitmap
@@ -912,5 +1008,13 @@ private fun CaptureDetail(file: File, onBack: () -> Unit) {
     }
     if (shareDetailDialog) {
         ShareFormatDialog(listOf(file)) { shareDetailDialog = false }
+    }
+    if (renameDialog) {
+        RenameCaptureDialog(
+            file = file,
+            suggestions = shareSuggestions(context, listOf(file)),
+            onDismiss = { renameDialog = false },
+            onRenamed = { newFile -> renameDialog = false; onRenamed(newFile) }
+        )
     }
 }
