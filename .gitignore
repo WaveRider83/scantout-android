@@ -6,3 +6,4 @@ build/
 .DS_Store
 *.apk
 PLAN_V5.md
+.kotlin/
