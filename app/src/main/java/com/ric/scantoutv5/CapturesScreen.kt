@@ -9,8 +9,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -332,14 +336,22 @@ fun rotateBitmapTop(src: android.graphics.Bitmap, degrees: Float): android.graph
 fun CapturesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var captures by remember { mutableStateOf(CapturesStore.list(context)) }
-    var ascending by remember { mutableStateOf(true) }
+    var ascending by remember { mutableStateOf(Settings.sortAscending(context)) }
     val shown = remember(captures, ascending) {
         if (ascending) captures.sortedBy { it.lastModified() } else captures.sortedByDescending { it.lastModified() }
     }
     // Rotations lues en une seule passe (évite de relire le JSON par item)
     val rotationMap = remember(captures) { OcrSelectionStore.loadAllRotations(context) }
     var selected by remember { mutableStateOf<File?>(null) }
-    var viewMode by remember { mutableStateOf(ViewMode.GRID) }
+    var viewMode by remember { mutableStateOf(runCatching { ViewMode.valueOf(Settings.viewMode(context)) }.getOrDefault(ViewMode.GRID)) }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = Settings.scrollPos(context, "GRID"))
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = Settings.scrollPos(context, "LIST"))
+    val detailState = rememberLazyListState(initialFirstVisibleItemIndex = Settings.scrollPos(context, "DETAIL"))
+    LaunchedEffect(viewMode) { Settings.setViewMode(context, viewMode.name) }
+    LaunchedEffect(ascending) { Settings.setSortAscending(context, ascending) }
+    LaunchedEffect(gridState) { snapshotFlow { gridState.firstVisibleItemIndex }.collectLatest { Settings.setScrollPos(context, "GRID", it) } }
+    LaunchedEffect(listState) { snapshotFlow { listState.firstVisibleItemIndex }.collectLatest { Settings.setScrollPos(context, "LIST", it) } }
+    LaunchedEffect(detailState) { snapshotFlow { detailState.firstVisibleItemIndex }.collectLatest { Settings.setScrollPos(context, "DETAIL", it) } }
     var selectionMode by remember { mutableStateOf(false) }
     var checked by remember { mutableStateOf(setOf<String>()) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -451,6 +463,7 @@ fun CapturesScreen(onBack: () -> Unit) {
         } else {
             when (viewMode) {
                 ViewMode.GRID -> LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -489,6 +502,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     }
                 }
                 ViewMode.LIST -> LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -528,6 +542,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     }
                 }
                 ViewMode.DETAIL -> LazyColumn(
+                    state = detailState,
                     contentPadding = PaddingValues(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
