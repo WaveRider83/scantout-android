@@ -273,9 +273,9 @@ private fun fmtSize(f: File): String {
     return if (kb < 1024) "%.0f Ko".format(kb) else "%.1f Mo".format(kb / 1024.0)
 }
 
-fun loadRotatedBitmap(context: android.content.Context, file: java.io.File): android.graphics.Bitmap? {
-    val b = CapturesStore.decodeBitmap(file) ?: return null
-    val rot = OcrSelectionStore.loadRotation(context, file.name)
+fun loadRotatedBitmap(context: android.content.Context, file: java.io.File, maxDim: Int = 1600, rotation: Int? = null): android.graphics.Bitmap? {
+    val b = CapturesStore.decodeBitmap(file, maxDim) ?: return null
+    val rot = rotation ?: OcrSelectionStore.loadRotation(context, file.name)
     return if (rot % 360 == 0) b else rotateBitmapTop(b, rot.toFloat())
 }
 
@@ -297,6 +297,8 @@ fun CapturesScreen(onBack: () -> Unit) {
     val shown = remember(captures, ascending) {
         if (ascending) captures.sortedBy { it.lastModified() } else captures.sortedByDescending { it.lastModified() }
     }
+    // Rotations lues en une seule passe (évite de relire le JSON par item)
+    val rotationMap = remember(captures) { OcrSelectionStore.loadAllRotations(context) }
     var selected by remember { mutableStateOf<File?>(null) }
     var viewMode by remember { mutableStateOf(ViewMode.GRID) }
     var selectionMode by remember { mutableStateOf(false) }
@@ -417,7 +419,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(shown, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, rotationMap[file.name] ?: 0) { loadRotatedBitmap(context, file, 512, rotationMap[file.name] ?: 0)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Box {
@@ -452,7 +454,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(shown, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, rotationMap[file.name] ?: 0) { loadRotatedBitmap(context, file, 512, rotationMap[file.name] ?: 0)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Row(
                             Modifier
@@ -492,7 +494,7 @@ fun CapturesScreen(onBack: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(shown, key = { it.absolutePath }) { file ->
-                        val bmp = remember(file.absolutePath, OcrSelectionStore.loadRotation(context, file.name)) { loadRotatedBitmap(context, file)?.asImageBitmap() }
+                        val bmp = remember(file.absolutePath, rotationMap[file.name] ?: 0) { loadRotatedBitmap(context, file, 512, rotationMap[file.name] ?: 0)?.asImageBitmap() }
                         val isChecked = file.absolutePath in checked
                         Card(
                             modifier = Modifier

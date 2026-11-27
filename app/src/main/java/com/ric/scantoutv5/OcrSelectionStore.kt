@@ -33,6 +33,17 @@ object OcrSelectionStore {
         f.writeText(obj.toString())
     }
 
+    /** En une seule lecture : toutes les rotations mémorisées (clé = nom de fichier). */
+    fun loadAllRotations(context: Context): Map<String, Int> {
+        val f = store(context)
+        if (!f.exists()) return emptyMap()
+        return runCatching {
+            val obj = JSONObject(f.readText())
+            obj.keys().asSequence().filter { it.endsWith("#rot") }
+                .associate { it.removeSuffix("#rot") to obj.optInt(it, 0) }
+        }.getOrDefault(emptyMap())
+    }
+
     fun loadRotation(context: Context, fileName: String): Int {
         val f = store(context)
         if (!f.exists()) return 0
